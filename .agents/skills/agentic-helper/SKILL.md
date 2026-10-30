@@ -100,6 +100,19 @@ Once logged in:
 
 ---
 
+### Phase 3B: Multi-Tab Concurrent Execution (Solve All Open Quizzes Simultaneously)
+If the user has multiple courses or quizzes open in separate tabs (or asks to "solve all tabs"):
+```python
+from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync
+
+# Executes bounded concurrent workers across all open tabs in parallel
+results = solve_all_open_quizzes_sync(max_concurrency=4, auto_submit=True)
+print(f"Passed {results['passed_count']} of {results['total_tabs']} tabs concurrently!")
+```
+*(Or use native MCP tool `solve_parallel_quizzes(max_concurrency=4)`).*
+
+---
+
 ## 🧠 Built-In Algorithmic & Diagram Solvers
 
 For Computer Science, Distributed Systems, and Graph Quizzes:

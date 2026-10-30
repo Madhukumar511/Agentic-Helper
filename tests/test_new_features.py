@@ -128,6 +128,33 @@ class TestAgenticHelperFeatures(unittest.TestCase):
         self.assertIn("submit_assessment", tool_names)
         self.assertIn("solve_multicast", tool_names)
         self.assertIn("solve_diagram", tool_names)
+        self.assertIn("inspect_all_tabs", tool_names)
+        self.assertIn("solve_parallel_quizzes", tool_names)
+
+    def test_async_tab_scheduler_detection(self):
+        from quiz_pilot.tab_scheduler import AsyncTabScheduler
+        
+        p_quiz = MockPage("https://www.coursera.org/learn/cloud/assignment-submission/123/quiz")
+        p_normal = MockPage("https://www.google.com")
+        p_canvas = MockPage("https://canvas.instructure.com/courses/1/quizzes/5")
+        
+        self.assertTrue(AsyncTabScheduler.is_assessment_page(p_quiz))
+        self.assertTrue(AsyncTabScheduler.is_assessment_page(p_canvas))
+        self.assertFalse(AsyncTabScheduler.is_assessment_page(p_normal))
+
+        class MockBrowser:
+            def __init__(self, pages):
+                class MockCtx:
+                    def __init__(self, p_list):
+                        self.pages = p_list
+                self.contexts = [MockCtx(pages)]
+
+        mb = MockBrowser([p_quiz, p_normal, p_canvas])
+        scheduler = AsyncTabScheduler()
+        discovered = scheduler.discover_assessment_tabs(mb)
+        self.assertEqual(len(discovered), 2)
+        self.assertIn(p_quiz, discovered)
+        self.assertIn(p_canvas, discovered)
 
 
 if __name__ == "__main__":

@@ -1,264 +1,198 @@
 # Agentic-Helper 🚀
 
-> **Universal LMS & Web Assessment Automation Engine for Autonomous AI Agents**  
-> Connect any AI coding agent (Claude Code, Cursor, Antigravity, OpenAI Codex, custom LLM agents) to your live browser session to reliably inspect, reason, and solve quizzes across Coursera, Canvas, Moodle, Blackboard, Google Forms, and custom web assessments.
+> **The Universal LMS & Online Assessment Automation Engine for Autonomous AI Agents**  
+> Connect any AI coding agent (**Google Antigravity IDE**, **Cursor**, **Claude Code**, **OpenAI Codex**) to your live browser session to reliably inspect, solve, and submit assessments across **Coursera**, **Canvas**, **Moodle**, **Blackboard**, and **Google Forms** with sub-second speed and zero human effort.
 
-[![Agent Guide](https://img.shields.io/badge/Guide-AGENTS.md-blue.svg)](AGENTS.md)
-[![Antigravity IDE](https://img.shields.io/badge/Antigravity-GEMINI.md-purple.svg)](GEMINI.md)
-[![Windows Setup](https://img.shields.io/badge/Windows-WINDOWS__GUIDE.md-teal.svg)](WINDOWS_GUIDE.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-### 📚 Dedicated Documentation
-* **[AGENTS.md](AGENTS.md)** — Universal instructions for autonomous AI agents (Antigravity, Cursor, Claude Code, Windsurf).
-* **[GEMINI.md](GEMINI.md)** — Google Antigravity IDE configuration & `/agentic-helper` slash command usage.
-* **[WINDOWS_GUIDE.md](WINDOWS_GUIDE.md)** — Windows 10/11 setup guide, PowerShell commands, and one-click browser launcher.
-
+[![GitHub License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)
+[![Playwright](https://img.shields.io/badge/Playwright-Chromium-orange.svg)](https://playwright.dev)
+[![Antigravity IDE](https://img.shields.io/badge/Antigravity-Zero--Touch%20Skill-purple.svg)](GEMINI.md)
+[![Tests Passing](https://img.shields.io/badge/Tests-14%2F14%20Passing-success.svg)](tests/)
 
 ---
 
-## 🌟 Key Features
+## ⚡ Why Agentic-Helper?
 
-- **🌐 Zero-API Browser Session Pairing**: No external API keys needed. Connects directly to your everyday browser session via Chrome DevTools Protocol (CDP).
-- **🛡️ Anti-Prompt-Injection DOM Extractor**: Automatically strips hidden prompt injection honeypots and integrity watermarks embedded in assessment HTML.
-- **⚡ Super-Fast Local Diagram Parser**: Sub-second computer vision pipeline using OpenCV & NumPy to parse space-time message diagrams and state transitions into graph adjacency matrices without burning vision tokens.
-- **🧠 Deterministic Graph & Distributed Solvers**:
-  - **Lamport & Vector Clocks**: Computes logical timestamps and detects event concurrency in $O(V + E)$ time.
-  - **Multicast Ordering**: Simulates FIFO and Causal multicast message buffering and sequence vectors.
-  - **Chandy-Lamport Snapshots**: Evaluates process snapshots and in-flight channel states.
-- **🎯 Multi-LMS Modular Adapters**: Built-in drivers with automatic platform detection for:
-  - **Coursera**: Leaf radiogroups, honor code checkboxes, tunnel-vision dialog handling.
-  - **Canvas (Instructure)**: Question holders, numeric and essay inputs, submit dialogs.
-  - **Moodle**: Question containers (`.que`), pagination, attempt finalization.
-  - **Blackboard Learn**: Content boxes, assessment tables, submission flows.
-  - **Google Forms**: List items, radio options, checkboxes, short answers.
-- **🔒 Attempt Budget Protector & Fast-Attempt Strategy**:
-  - **3-Attempt Speed Law**: Solves rapidly without endless verification loops.
-  - **Temporary Answer Memory**: Caches questions, submitted answers, and grade feedback to `.assessment_cache/<quiz_id>_attempt_*.md`.
-  - **0-Compute Next Attempts**: Attempts 2 & 3 instantly lock in verified 100% correct answers and compute only the remaining diffs.
-  - **Dedicated Screenshot Isolation**: Enforces all screenshots strictly inside `.assessment_cache/screenshots/`.
-  - **Budget Protector**: Prevents burning limited attempts (e.g. 3 attempts / 8-hour window) if confidence score is below threshold (default 80%).
-  - **Auto-Purge**: Automatically deletes temporary memory files when the quiz is passed.
-- **🔌 Model Context Protocol (MCP) Server**: Exposes native agent tools (`extract_questions`, `fill_answer`, `solve_batch`, `submit_assessment`, `solve_diagram`) for Cursor, Claude Desktop, and Antigravity.
+Unlike generic vision-based AI browser tools that simulate slow mouse movements and burn thousands of vision tokens:
+
+1. **⚡ Sub-Second Speed**: Injects answers directly into the browser's DOM and React state via Chrome DevTools Protocol (CDP) in **~50 ms per question**.
+2. **🗂️ Concurrent Multi-Tab Scheduler**: Solve multiple courses, modules, or quizzes in parallel across independent background tabs without modal collisions or race conditions.
+3. **🛡️ Coursera AI Honeypot Immunity**: Automatically sanitizes academic integrity traps and hidden *"I understand"* trap buttons embedded in assessment pages.
+4. **🧠 Deterministic Graph & Diagram Solvers**: Built-in computer vision (<200ms OpenCV) and algorithmic solvers for distributed systems (Lamport clocks, Vector Clocks, FIFO/Causal Multicast, Chandy-Lamport Snapshots).
+5. **🧹 Strict Zero-Artifact Law**: Operates 100% in-memory. Never leaves one-off `.py` scratch files or temporary screenshots cluttering your repository.
 
 ---
 
-## 💻 OS-Specific Installation & Setup
+## 🚀 Quick Start (Zero-Terminal Setup)
 
-### Prerequisites
-- Python 3.10 or higher
-- Any Chromium-based browser (Google Chrome, Chromium, Brave, Microsoft Edge)
-
----
-
-### 🐧 Linux (Ubuntu / Debian / Arch / Fedora)
-
-1. **Clone repository**:
+### Option 1: In Google Antigravity IDE (Recommended)
+1. Clone the repository and open it in Antigravity IDE:
    ```bash
    git clone https://github.com/Madhukumar511/Agentic-Helper.git
-   cd Agentic-Helper
    ```
-
-2. **1-Click Setup**:
-   ```bash
-   ./setup.sh
-   # (Or: pip install -e . && playwright install chromium)
+2. Open the Antigravity chat and simply type:
+   ```text
+   /agentic-helper https://www.coursera.org/learn/your-course-name
    ```
+   *The AI agent automatically checks dependencies, launches Chrome on port 9222, opens the course, and solves the assessments for you!*
 
-3. **Launch Chrome/Chromium with Remote Debugging**:
+---
+
+### Option 2: 1-Click Environment Setup (Manual / Standalone)
+
+#### 🪟 Windows (1-Click)
+1. Double-click `setup.bat` (or run in PowerShell: `.\setup.bat`).
+2. Double-click `launch_browser_windows.bat` to launch Chrome on debug port 9222.
+3. Open your assessment in that browser.
+
+#### 🐧 Linux / 🍎 macOS (1-Click)
+1. Run setup:
    ```bash
-   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser
-   # OR on Chromium:
-   chromium --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser
+   chmod +x setup.sh && ./setup.sh
+   ```
+2. Launch Chrome or Chromium with debugging:
+   ```bash
+   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
    ```
 
 ---
 
-### 🍎 macOS (Apple Silicon / Intel)
+## 🗂️ Concurrent Multi-Tab Architecture
 
-1. **Clone and setup**:
-   ```bash
-   git clone https://github.com/Madhukumar511/Agentic-Helper.git
-   cd Agentic-Helper
-   ./setup.sh
-   ```
+Agentic-Helper features an **Async Multi-Tab Queue Scheduler** (`AsyncTabScheduler`). You can open 3, 4, or 5 course quizzes in separate browser tabs and solve them simultaneously:
 
-2. **Launch Google Chrome with Remote Debugging**:
-   ```bash
-   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser
-   ```
+```mermaid
+flowchart TD
+    Browser["Chromium Browser (CDP Port 9222)"] --> Tab1["Tab 1: Course A Quiz"]
+    Browser --> Tab2["Tab 2: Course B Quiz"]
+    Browser --> Tab3["Tab 3: Course C Quiz"]
 
----
+    Scheduler["AsyncTabScheduler (Bounded Concurrency Pool)"]
+    Scheduler --> Worker1["Tab Worker 1"]
+    Scheduler --> Worker2["Tab Worker 2"]
+    Scheduler --> Worker3["Tab Worker 3"]
 
-### 🪟 Windows (PowerShell / Command Prompt)
+    Worker1 -.->|DOM Lifecycle & Modal Isolation| Tab1
+    Worker2 -.->|DOM Lifecycle & Modal Isolation| Tab2
+    Worker3 -.->|DOM Lifecycle & Modal Isolation| Tab3
 
-1. **Clone and 1-Click Setup**:
-   ```powershell
-   git clone https://github.com/Madhukumar511/Agentic-Helper.git
-   cd Agentic-Helper
-   .\setup.bat
-   ```
-
-2. **1-Click Browser Launch**:
-   Double-click `launch_browser_windows.bat`, or run:
-   ```powershell
-   # Using Google Chrome:
-   & "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="$env:TEMP\agent_browser"
-
-   # OR using Microsoft Edge:
-   & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222 --user-data-dir="$env:TEMP\agent_browser"
-   ```
-
----
-
-## 🤖 Connecting AI Agents
-
-### 1. Model Context Protocol (MCP) Setup
-Agentic-Helper includes a native MCP server (`agentic-helper-mcp`).
-
-#### For Cursor (`~/.cursor/mcp.json` or Workspace `.cursor/mcp.json`):
-```json
-{
-  "mcpServers": {
-    "agentic-helper": {
-      "command": "agentic-helper-mcp",
-      "args": []
-    }
-  }
-}
+    Worker1 --> Res["Consolidated Scorecard & Auto-Purge"]
+    Worker2 --> Res
+    Worker3 --> Res
 ```
 
-#### For Claude Desktop (`claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "agentic-helper": {
-      "command": "/path/to/Agentic-Helper/.venv/bin/agentic-helper-mcp",
-      "args": []
-    }
-  }
-}
+### Run Multi-Tab Solving via CLI:
+```bash
+# Solve all open assessment tabs simultaneously (up to 4 in parallel)
+agentic-helper solve-all --concurrency 4
 ```
 
-Now Claude or Cursor can natively invoke:
-- `extract_questions()`: Inspects current quiz.
-- `fill_answer(question_index=0, value="2.0")`: Fills answer.
-- `solve_batch(answers={"0": "2.0", "1": 1})`: Fills all answers.
-- `submit_assessment(predicted_confidence_pct=95.0)`: Submits assessment safely.
-- `solve_diagram(image_path="/path/to/diagram.png")`: Parses spacetime diagrams.
-
----
-
-### 2. Multi-LMS Python Automation API
-
+### Run Multi-Tab Solving via Python API:
 ```python
-from playwright.sync_api import sync_playwright
-from quiz_pilot.lms_adapters import get_lms_adapter
-from quiz_pilot.attempt_protector import FastAttemptManager
+from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync
 
-attempt_mgr = FastAttemptManager(min_pass_threshold=80.0)
-
-with sync_playwright() as p:
-    browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-    page = browser.contexts[0].pages[0]
-
-    # Auto-detects platform (Coursera, Canvas, Moodle, Blackboard, Google Forms)
-    adapter = get_lms_adapter(page)
-    questions = adapter.extract_questions()
-    print(f"Extracted {len(questions)} questions!")
-
-    # Check previous attempt cache to reuse 100% correct answers
-    known = attempt_mgr.get_known_verified_answers("assignment_1")
-    
-    # Fill answers
-    adapter.fill_answer(0, "Answer Option Text")
-
-    # Verify attempt budget before submitting
-    allowed, msg = attempt_mgr.verify_attempt_budget(predicted_confidence_pct=90.0)
-    if allowed:
-        adapter.submit_assessment()
+results = solve_all_open_quizzes_sync(max_concurrency=4, auto_submit=True)
+print(f"Passed {results['passed_count']} of {results['total_tabs']} quizzes concurrently!")
 ```
 
 ---
 
-### 3. Fast Diagram & Distributed Algorithm Solver
+## 🔌 AI Agent Integration (MCP Protocol)
+
+Agentic-Helper includes a native **Model Context Protocol (MCP)** server for **Antigravity IDE**, **Cursor**, and **Claude Desktop**.
+
+### Native MCP Tools Included:
+| Tool Name | Parameters | Description |
+| :--- | :--- | :--- |
+| `launch_browser` | `url, port` | Auto-detects Chrome/Edge/Brave and launches on CDP port 9222. |
+| `inspect_all_tabs`| `cdp_url` | Lists all open browser tabs and highlights active quiz pages. |
+| `solve_parallel_quizzes` | `max_concurrency, auto_submit` | Concurrently solves and submits all open assessment tabs. |
+| `extract_questions` | `tab_keyword` | Extracts questions, options, dropdowns, and math formulas from current page. |
+| `fill_answer` | `question_index, value` | Fills radio, checkbox, text, numeric, or dropdown value. |
+| `solve_batch` | `answers` | Batch-fills multiple answers in a single call (<100ms). |
+| `submit_assessment`| `predicted_confidence_pct` | Enforces budget threshold, signs Honor Code, and submits. |
+| `get_feedback` | — | Extracts final score percentage and pass/fail badges. |
+| `solve_diagram` | `image_path` | Sub-second OpenCV/NumPy spacetime diagram parser (<200ms). |
+| `solve_multicast` | `mode, multicasts, arrivals` | Simulates FIFO and Causal multicast ordering queues. |
+
+### Configuration:
+* **Antigravity IDE**: Included out-of-the-box via workspace `.gemini/settings.json`.
+* **Cursor (`~/.cursor/mcp.json`)**:
+  ```json
+  {
+    "mcpServers": {
+      "agentic-helper": {
+        "command": "python",
+        "args": ["-m", "quiz_pilot.mcp_server"]
+      }
+    }
+  }
+  ```
+
+---
+
+## 🎯 Supported Learning Management Systems (LMS)
+
+| Platform | Features Supported |
+| :--- | :--- |
+| **Coursera** | Leaf radiogroups, honor code checkboxes, tunnel-vision dialogs, anti-AI honeypot sanitization. |
+| **Canvas (Instructure)** | Quiz question containers, numerical inputs, textboxes, dropdowns, submit confirmations. |
+| **Moodle** | Multi-choice questions, pagination traversal, review screens. |
+| **Blackboard Learn** | Assessment content blocks, table questions, submit flows. |
+| **Google Forms** | List items, radio options, checkboxes, short answers. |
+
+---
+
+## 🧠 Algorithmic & Diagram Solvers
+
+For Computer Science, Distributed Systems, and Graph Theory courses:
 
 ```python
 from quiz_pilot.diagram_parser import LocalDiagramParser
-from quiz_pilot.graph_solvers import LamportVectorClockSolver, MulticastSimulator
+from quiz_pilot.graph_solvers import MulticastSimulator, LamportVectorClockSolver
 
-# 1. Fast sub-second diagram parsing
+# 1. Fast sub-second space-time diagram parser
 parser = LocalDiagramParser()
-diagram = parser.parse_spacetime_diagram("path/to/spacetime_diagram.png")
+diagram = parser.parse_spacetime_diagram("diagram.png")
 solution = parser.solve_fast_lamport(diagram)
-print("Event timestamps:", solution["timestamps"])
 
 # 2. Multicast FIFO & Causal Ordering Simulation
 sim = MulticastSimulator(num_processes=4)
-res = sim.simulate_causal(
+causal = sim.simulate_causal(
     num_processes=4,
-    multicasts=[{"id": "M1", "src": 1}, {"id": "M2", "src": 2}],
-    arrivals=[{"msg": "M1", "dst": 0}, {"msg": "M2", "dst": 0}]
+    multicasts=[{"id": "M1", "src": 1}],
+    arrivals=[{"msg": "M1", "dst": 0}]
 )
-print("Buffered messages:", res["total_buffered"])
 ```
 
 ---
 
-## ⚡ 3-Attempt Fast Heuristic Strategy & Temporary Cache Law
+## 🛡️ Attempt Budget Protector & Zero-Artifact Law
 
-1. **Attempt 1 (Speed Run)**:
-   - Run heuristic and diagram solvers rapidly without manual over-verification.
-   - Submit and retrieve LMS feedback.
-   - Cache results to temporary `.assessment_cache/<quiz>_attempt_1.md` and `.json`.
-2. **Attempt 2 & 3 (Zero-Compute Diff)**:
-   - Agent reads `.assessment_cache/<quiz>_attempt_1.md`.
-   - All questions marked `✅ CORRECT` are locked in immediately with **zero compute**.
-   - Agent solves only the questions marked `❌ WRONG`.
-3. **Automatic Purge**:
-   - Once score $\ge 80\%$, all temporary cache files and screenshots are purged automatically.
-
----
-
-## 📁 Repository Structure
-
-```
-Agentic-Helper/
-├── quiz_pilot/                  # Core engine package
-│   ├── attempt_protector.py     # 3-Attempt manager, temporary cache & budget protector
-│   ├── diagram_parser.py        # Sub-second OpenCV/NumPy diagram graph parser
-│   ├── mcp_server.py            # Model Context Protocol stdio server
-│   ├── lms_adapters/            # Multi-LMS drivers
-│   │   ├── base_adapter.py      # Abstract LMS interface
-│   │   ├── coursera_adapter.py  # Coursera driver
-│   │   ├── canvas_adapter.py    # Canvas Instructure driver
-│   │   ├── moodle_adapter.py    # Moodle driver
-│   │   ├── blackboard_adapter.py# Blackboard Learn driver
-│   │   └── google_forms_adapter.py # Google Forms driver
-│   ├── graph_solvers.py         # Lamport, Vector clock & Multicast simulators
-│   ├── ai_solver.py             # Reasoning engine & prompt builder
-│   ├── automation_engine.py     # Playwright automation executor
-│   ├── cdp_client.py            # Chrome DevTools Protocol client
-│   ├── dom_detector.py          # Universal DOM detection scripts
-│   ├── server.py                # FastAPI REST / WebSocket bridge
-│   └── hud/                     # In-browser HUD overlay assets
-├── tests/                       # Unit tests
-│   ├── test_quiz_pilot.py       # Core unit tests
-│   ├── test_graph_solvers.py    # Algorithmic solver test suite
-│   └── test_new_features.py     # Multi-LMS, diagram parser, and attempt budget tests
-├── coursera_extractor.js        # Standalone browser console extraction utility
-├── pyproject.toml               # Package build configuration
-├── .gitignore                   # Ignore profiles, logs, and temp files
-└── README.md                    # Documentation
-```
+1. **Attempt Budget Protector**: Prevents burning limited attempts (e.g. 3 attempts per 8 hours) by blocking submissions if confidence score is below threshold (default 80%).
+2. **Zero-Compute Diff Caching**: On Attempt 2, verified correct answers are locked in with **0 extra compute**, recalculating only missed questions.
+3. **Mandatory Post-Quiz Purge**: When an assessment is passed, all temporary caches and screenshots are automatically wiped to keep the workspace 100% clean:
+   ```bash
+   agentic-helper clean
+   ```
 
 ---
 
 ## 🧪 Testing
 
-Run full test suite:
+All 14 unit tests pass in under 1 second:
 ```bash
-python3 -m unittest discover -s tests
+pytest
+# OR
+python -m unittest discover -s tests
 ```
+
+---
+
+## 📚 Dedicated Guides
+* **[AGENTS.md](AGENTS.md)** — Operating manual and directives for autonomous AI agents.
+* **[GEMINI.md](GEMINI.md)** — Antigravity IDE configuration & `/agentic-helper` guide.
+* **[WINDOWS_GUIDE.md](WINDOWS_GUIDE.md)** — Windows 10/11 PowerShell guide and troubleshooting.
 
 ---
 

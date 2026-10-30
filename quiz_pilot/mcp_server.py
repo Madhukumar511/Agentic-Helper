@@ -22,6 +22,7 @@ from quiz_pilot.attempt_protector import FastAttemptManager
 from quiz_pilot.graph_solvers import MulticastSimulator, LamportVectorClockSolver
 from quiz_pilot.diagram_parser import LocalDiagramParser
 from quiz_pilot.browser_launcher import launch_browser, is_browser_running
+from quiz_pilot.tab_scheduler import AsyncTabScheduler
 
 # Initialize helper engines
 attempt_mgr = FastAttemptManager()
@@ -147,6 +148,44 @@ TOOLS = [
             },
             "required": ["image_path"]
         }
+    },
+    {
+        "name": "inspect_all_tabs",
+        "description": "Lists all open browser tabs and identifies which ones are active assessment or course pages.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            }
+        }
+    },
+    {
+        "name": "solve_parallel_quizzes",
+        "description": "Executes concurrent multi-tab quiz solving across all open assessment tabs using isolated async workers.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "max_concurrency": {
+                    "type": "integer",
+                    "description": "Maximum number of tabs to process in parallel (default: 4)",
+                    "default": 4
+                },
+                "auto_submit": {
+                    "type": "boolean",
+                    "description": "Whether to automatically submit each quiz and verify grade (default: true)",
+                    "default": True
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            }
+        }
     }
 ]
 
@@ -218,6 +257,18 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         parsed = diagram_parser.parse_spacetime_diagram(img_path)
         solved = diagram_parser.solve_fast_lamport(parsed)
         return {"content": [{"type": "text", "text": json.dumps({"parsed": parsed, "solution": solved}, indent=2)}]}
+
+    if name == "inspect_all_tabs":
+        scheduler = AsyncTabScheduler(cdp_url=cdp_url)
+        tabs = await scheduler.inspect_all_tabs()
+        return {"content": [{"type": "text", "text": json.dumps(tabs, indent=2)}]}
+
+    if name == "solve_parallel_quizzes":
+        concurrency = int(arguments.get("max_concurrency", 4))
+        auto_sub = arguments.get("auto_submit", True)
+        scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=concurrency)
+        batch_results = await scheduler.run_parallel_batch(auto_submit=auto_sub)
+        return {"content": [{"type": "text", "text": json.dumps(batch_results, indent=2)}]}
 
     # Browser tools via CDP
     async with async_playwright() as p:

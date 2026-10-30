@@ -15,6 +15,7 @@ from .graph_solvers import ChandyLamportSolver, MulticastSimulator, LamportVecto
 from .diagram_parser import LocalDiagramParser
 from .attempt_protector import FastAttemptManager
 from .lms_adapters import get_lms_adapter
+from .tab_scheduler import AsyncTabScheduler, solve_all_open_quizzes_sync
 
 __all__ = [
     "DETECTION_SCRIPT",
@@ -29,5 +30,7 @@ __all__ = [
     "LamportVectorClockSolver",
     "LocalDiagramParser",
     "FastAttemptManager",
-    "get_lms_adapter"
+    "get_lms_adapter",
+    "AsyncTabScheduler",
+    "solve_all_open_quizzes_sync"
 ]
