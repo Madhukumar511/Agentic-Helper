@@ -11,8 +11,8 @@ When invoked (via `/agentic-helper` or quiz automation requests), take autonomou
 
 ## 🚀 Autonomous Execution Workflow
 
-### Step 1: Detect Live Browser Session (CDP)
-Verify or connect to the user's running browser session on remote debugging port `9222`:
+### Step 1: Detect Live Browser Session (CDP) & Active Quiz Tab
+Verify or connect to the user's running browser session on remote debugging port `9222`. Scan all tabs to find the active assessment tab:
 
 ```python
 from playwright.sync_api import sync_playwright
@@ -21,7 +21,22 @@ from quiz_pilot.attempt_protector import FastAttemptManager
 
 with sync_playwright() as p:
     browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-    page = browser.contexts[0].pages[0]
+    
+    # Intelligently locate the active assessment tab across all open windows & tabs
+    page = None
+    lms_keywords = ["coursera", "canvas", "moodle", "blackboard", "exam", "quiz", "assessment", "forms"]
+    for ctx in browser.contexts:
+        for p_tab in ctx.pages:
+            try:
+                if any(k in p_tab.url.lower() or k in p_tab.title().lower() for k in lms_keywords):
+                    page = p_tab
+                    break
+            except Exception:
+                pass
+        if page:
+            break
+    if not page and browser.contexts and browser.contexts[0].pages:
+        page = browser.contexts[0].pages[0]
 ```
 
 *If no browser is listening on 9222, launch one using:*

@@ -49,10 +49,20 @@ class FastAttemptManager:
         return path
 
     def _get_q_fingerprint(self, question: Dict) -> str:
+        """
+        Computes a collision-resistant fingerprint for a question using:
+        1. Full normalized prompt text (no truncation).
+        2. Sorted normalized options.
+        3. Question type.
+        Eliminates collisions even in randomized question pools with identical intro text.
+        """
         prompt = question.get("prompt", "").strip()
-        # Normalise whitespace
-        norm = " ".join(prompt.split())[:150]
-        return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+        norm_prompt = " ".join(prompt.split())
+        options = question.get("options", [])
+        norm_opts = "|".join(sorted([" ".join(str(opt).split()) for opt in options]))
+        q_type = str(question.get("type", ""))
+        content = f"{q_type}::{norm_prompt}::options::{norm_opts}"
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()[:24]
 
     def save_attempt(
         self,

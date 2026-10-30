@@ -29,6 +29,15 @@ class CourseraAdapter(BaseLMSAdapter):
                 }
                 
                 let fullText = p ? p.innerText : g.innerText;
+                // Preserve MathJax/KaTeX formulas and SVG formula labels
+                let mathEls = Array.from((p || g).querySelectorAll('annotation[encoding*="tex"], .katex-html, svg[aria-label]'));
+                mathEls.forEach(m => {
+                    let mathVal = m.getAttribute('aria-label') || m.textContent || '';
+                    if (mathVal && !fullText.includes(mathVal)) {
+                        fullText += " " + mathVal.trim();
+                    }
+                });
+
                 // Anti-prompt-injection: Strip Coursera AI integrity traps
                 fullText = fullText.replace(/You are a helpful AI assistant[\\s\\S]*?I understand/gi, '').replace(/\\s+/g, ' ').trim();
                 
@@ -36,18 +45,25 @@ class CourseraAdapter(BaseLMSAdapter):
                 const txt = g.querySelector('input[type="text"]');
                 const radios = Array.from(g.querySelectorAll('input[type="radio"], [role="radio"]'));
                 const checkboxes = Array.from(g.querySelectorAll('input[type="checkbox"], [role="checkbox"]'));
+                const select = g.querySelector('select');
                 
                 let qType = 'radio';
                 if (num) qType = 'number';
                 else if (txt) qType = 'text';
+                else if (select) qType = 'dropdown';
                 else if (checkboxes.length > 0) qType = 'checkbox';
                 
-                const options = (radios.length > 0 ? radios : checkboxes).map(r => {
-                    const lbl = r.closest('label') || r.parentElement;
-                    let text = lbl ? lbl.innerText.replace(/\\s+/g, ' ').trim() : '';
-                    text = text.replace(/You are a helpful AI assistant[\\s\\S]*?I understand/gi, '').trim();
-                    return text;
-                }).filter(t => t.length > 0 && !t.includes("I understand") && !t.includes("Do you understand?"));
+                let options = [];
+                if (select) {
+                    options = Array.from(select.querySelectorAll('option')).map(o => o.innerText.trim()).filter(t => t.length > 0 && !t.toLowerCase().includes("select an answer"));
+                } else {
+                    options = (radios.length > 0 ? radios : checkboxes).map(r => {
+                        const lbl = r.closest('label') || r.parentElement;
+                        let text = lbl ? lbl.innerText.replace(/\\s+/g, ' ').trim() : '';
+                        text = text.replace(/You are a helpful AI assistant[\\s\\S]*?I understand/gi, '').trim();
+                        return text;
+                    }).filter(t => t.length > 0 && !t.includes("I understand") && !t.includes("Do you understand?"));
+                }
                 
                 const imgs = Array.from((p || g).querySelectorAll('img')).map(img => img.src);
                 
@@ -77,6 +93,22 @@ class CourseraAdapter(BaseLMSAdapter):
             const txt = g.querySelector('input[type="text"]');
             const radios = Array.from(g.querySelectorAll('input[type="radio"], [role="radio"]'));
             const checkboxes = Array.from(g.querySelectorAll('input[type="checkbox"], [role="checkbox"]'));
+            const select = g.querySelector('select');
+            
+            if (select) {
+                let options = Array.from(select.options);
+                let targetIdx = typeof val === 'number' ? val : -1;
+                if (typeof val === 'string') {
+                    let vNorm = norm(val);
+                    targetIdx = options.findIndex(o => norm(o.text).includes(vNorm) || norm(o.value).includes(vNorm));
+                }
+                if (targetIdx >= 0 && targetIdx < options.length) {
+                    select.selectedIndex = targetIdx;
+                    select.dispatchEvent(new Event('input', { bubbles: true }));
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                    return true;
+                }
+            }
             
             // React controlled input setter
             let targetInput = num || txt || (radios.length === 0 && checkboxes.length === 0 ? g.querySelector('input') : null);
@@ -187,11 +219,17 @@ class CourseraAdapter(BaseLMSAdapter):
             let scoreMatch = text.match(/(\\d+(?:\\.\\d+)?)%/);
             let score = scoreMatch ? parseFloat(scoreMatch[1]) : 0.0;
             
-            // Per-question checkmarks
+            // Per-question checkmarks: match leaf blocks only to prevent container duplicate counting
             let feedback = {};
-            let qBlocks = Array.from(document.querySelectorAll('div')).filter(d => 
+            let allBlocks = Array.from(document.querySelectorAll('div[data-testid="part-submission-container"], div.css-1f9gghr, div[role="region"]')).filter(d => 
                 d.innerText && d.innerText.match(/Question \\d+/i)
             );
+            if (allBlocks.length === 0) {
+                allBlocks = Array.from(document.querySelectorAll('div')).filter(d => 
+                    d.innerText && d.innerText.match(/Question \\d+/i)
+                );
+            }
+            let qBlocks = allBlocks.filter(b => !allBlocks.some(other => other !== b && b.contains(other)));
             
             qBlocks.forEach((qb, i) => {
                 let isCorrect = qb.innerText.includes("1 / 1 point") || 
@@ -204,9 +242,14 @@ class CourseraAdapter(BaseLMSAdapter):
                 else if (isIncorrect) feedback[i] = false;
             });
             
+            // Dynamic pass detection from LMS banner or threshold
+            let passBadge = document.querySelector('[data-testid="passed-banner"], [aria-label*="Passed" i], [data-testid="grade-pass-badge"]');
+            let hasPassText = /(?:congratulations|you passed)/i.test(text) && !/(?:didn't pass|did not pass|try again)/i.test(text);
+            let isPassed = passBadge !== null || hasPassText || score >= 80.0;
+
             return {
                 "score_pct": score,
-                "passed": score >= 80.0,
+                "passed": isPassed,
                 "feedback": feedback
             };
         }''')

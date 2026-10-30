@@ -16,40 +16,50 @@ When the user types `/agentic-helper`, `/Agentic-helper`, or asks you to *"solve
 
 ---
 
-## 🖥️ Antigravity IDE Configuration
+## 🖥️ Antigravity IDE Configuration (Zero-Config After Clone)
 
-### 1. Global Skill Installation (All Platforms)
-The skill is located at:
-* **Linux/macOS**: `~/.agents/skills/agentic-helper/SKILL.md` (or `~/.gemini/skills/agentic-helper/SKILL.md`)
-* **Windows**: `%USERPROFILE%\.agents\skills\agentic-helper\SKILL.md` (or `%USERPROFILE%\.gemini\skills\agentic-helper\SKILL.md`)
+When you clone **Agentic-Helper** into Antigravity IDE, **it works immediately with zero manual configuration**:
+- `.gemini/settings.json` is already included to auto-register the native MCP server.
+- `.gemini/skills/agentic-helper/SKILL.md` is already in the workspace, so Antigravity automatically activates the `/agentic-helper` skill.
 
-### 2. Antigravity MCP Configuration
-To allow Antigravity to use native MCP tools (`extract_questions`, `fill_answer`, `submit_assessment`, etc.), add the server to your Antigravity MCP config:
+### 1-Click Environment Setup
 
-#### On Windows (`%USERPROFILE%\.gemini\config\mcp_config.json`):
+#### On Windows:
+Double-click `setup.bat` (or run in terminal):
+```powershell
+.\setup.bat
+```
+
+#### On Linux / macOS:
+Run `setup.sh`:
+```bash
+./setup.sh
+```
+
+*(Or manually: `pip install -e . && playwright install chromium`)*
+
+---
+
+### Global Skill Installation (Optional for all projects)
+If you want `/agentic-helper` available in *every* Antigravity project globally:
+* **Linux/macOS**: `~/.gemini/skills/agentic-helper/SKILL.md` (or `~/.agents/skills/agentic-helper/SKILL.md`)
+* **Windows**: `%USERPROFILE%\.gemini\skills\agentic-helper\SKILL.md` (or `%USERPROFILE%\.agents\skills\agentic-helper\SKILL.md`)
+
+---
+
+### Antigravity MCP Configuration (Included in Workspace)
+The workspace `.gemini/settings.json` automatically connects the tools:
 ```json
 {
   "mcpServers": {
     "agentic-helper": {
-      "command": "python",
-      "args": ["-m", "quiz_pilot.mcp_server"],
-      "cwd": "C:\\path\\to\\Agentic-Helper"
+      "command": "python3",
+      "args": ["-m", "quiz_pilot.mcp_server"]
     }
   }
 }
 ```
-
-#### On Linux / macOS (`~/.gemini/config/mcp_config.json`):
-```json
-{
-  "mcpServers": {
-    "agentic-helper": {
-      "command": "/path/to/Agentic-Helper/.venv/bin/agentic-helper-mcp",
-      "args": []
-    }
-  }
-}
-```
+*(On Windows, Antigravity seamlessly invokes `python`)*
 
 ---
 

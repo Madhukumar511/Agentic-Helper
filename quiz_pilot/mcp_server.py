@@ -37,6 +37,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Chrome DevTools Protocol URL (default: http://127.0.0.1:9222)",
                     "default": "http://127.0.0.1:9222"
+                },
+                "tab_keyword": {
+                    "type": "string",
+                    "description": "Optional keyword in URL or Title to pick a specific tab (e.g. 'coursera', 'quiz')"
                 }
             }
         }
@@ -127,6 +131,47 @@ TOOLS = [
 ]
 
 
+def find_assessment_page(browser, target_keyword: Optional[str] = None):
+    """
+    Finds the active assessment page across all browser contexts and tabs.
+    Prioritizes:
+    1. Explicit keyword match in title or URL.
+    2. Any page whose URL or Title matches known LMS platforms (coursera, canvas, moodle, blackboard, etc.).
+    3. The first available page.
+    """
+    all_pages = []
+    for ctx in browser.contexts:
+        for p in ctx.pages:
+            all_pages.append(p)
+
+    if not all_pages:
+        return None
+
+    if target_keyword:
+        kw = target_keyword.lower()
+        for p in all_pages:
+            try:
+                if kw in p.url.lower() or kw in p.title().lower():
+                    return p
+            except Exception:
+                pass
+
+    lms_keywords = [
+        "coursera.org", "instructure.com", "canvas", "moodle",
+        "blackboard", "forms.gle", "docs.google.com/forms",
+        "assignment", "quiz", "exam", "assessment"
+    ]
+    for kw in lms_keywords:
+        for p in all_pages:
+            try:
+                if kw in p.url.lower() or kw in p.title().lower():
+                    return p
+            except Exception:
+                pass
+
+    return all_pages[0]
+
+
 async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     cdp_url = arguments.get("cdp_url", "http://127.0.0.1:9222")
 
@@ -155,7 +200,10 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         except Exception as e:
             return {"isError": True, "content": [{"type": "text", "text": f"CDP Connection failed: {e}. Ensure browser launched with --remote-debugging-port=9222"}]}
 
-        page = browser.contexts[0].pages[0]
+        page = find_assessment_page(browser, arguments.get("tab_keyword"))
+        if not page:
+            return {"isError": True, "content": [{"type": "text", "text": "No browser tabs open. Please open your quiz in the browser."}]}
+
         adapter = get_lms_adapter(page)
 
         if name == "extract_questions":

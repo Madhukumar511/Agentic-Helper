@@ -6,6 +6,7 @@ in < 200ms using OpenCV, NumPy, and lightweight OCR/geometry heuristics.
 """
 
 import os
+import shutil
 from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 
@@ -22,8 +23,16 @@ class LocalDiagramParser:
     """
     Parses distributed execution and state diagrams into graph structures.
     """
-    def __init__(self, tesseract_cmd: str = "/usr/bin/tesseract"):
-        self.tesseract_cmd = tesseract_cmd
+    def __init__(self, tesseract_cmd: Optional[str] = None):
+        if tesseract_cmd:
+            self.tesseract_cmd = tesseract_cmd
+        else:
+            found = shutil.which("tesseract")
+            if not found and os.name == "nt":
+                win_default = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+                if os.path.exists(win_default):
+                    found = win_default
+            self.tesseract_cmd = found or "/usr/bin/tesseract"
 
     def parse_spacetime_diagram(self, image_path: str) -> Dict[str, Any]:
         """
@@ -37,6 +46,10 @@ class LocalDiagramParser:
         pil_img = Image.open(image_path).convert("L")
         arr = np.array(pil_img)
         h, w = arr.shape
+
+        # Auto-detect dark mode (mean pixel brightness < 120) and invert
+        if np.mean(arr) < 120:
+            arr = 255 - arr
 
         # 1. Detect horizontal process lines
         # Process lines are dark horizontal strokes across > 40% width

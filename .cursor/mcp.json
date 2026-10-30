@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "agentic-helper": {
-      "command": "${workspaceFolder}/.venv/bin/agentic-helper-mcp",
-      "args": []
+      "command": "python3",
+      "args": ["-m", "quiz_pilot.mcp_server"]
     }
   }
 }

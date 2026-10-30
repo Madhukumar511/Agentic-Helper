@@ -22,16 +22,23 @@ class CanvasAdapter(BaseLMSAdapter):
                 let checkboxes = Array.from(qh.querySelectorAll('input[type="checkbox"]'));
                 let num = qh.querySelector('input.numerical_question_input, input[type="number"]');
                 let txt = qh.querySelector('input.text_question_input, input[type="text"]');
+                let select = qh.querySelector('select');
                 
                 let qType = 'radio';
                 if (num) qType = 'number';
                 else if (txt) qType = 'text';
+                else if (select) qType = 'dropdown';
                 else if (checkboxes.length > 0) qType = 'checkbox';
                 
-                let options = (radios.length > 0 ? radios : checkboxes).map(inp => {
-                    let lbl = qh.querySelector(`label[for="${inp.id}"]`) || inp.closest('label') || inp.parentElement;
-                    return lbl ? lbl.innerText.trim() : '';
-                }).filter(t => t.length > 0);
+                let options = [];
+                if (select) {
+                    options = Array.from(select.querySelectorAll('option')).map(o => o.innerText.trim()).filter(t => t.length > 0 && !t.toLowerCase().includes("choose"));
+                } else {
+                    options = (radios.length > 0 ? radios : checkboxes).map(inp => {
+                        let lbl = qh.querySelector(`label[for="${inp.id}"]`) || inp.closest('label') || inp.parentElement;
+                        return lbl ? lbl.innerText.trim() : '';
+                    }).filter(t => t.length > 0);
+                }
                 
                 let imgs = Array.from(qh.querySelectorAll('img')).map(img => img.src);
                 
@@ -57,8 +64,18 @@ class CanvasAdapter(BaseLMSAdapter):
             let txt = qh.querySelector('input.text_question_input, input[type="text"]');
             let radios = Array.from(qh.querySelectorAll('input[type="radio"]'));
             let checkboxes = Array.from(qh.querySelectorAll('input[type="checkbox"]'));
+            let select = qh.querySelector('select');
             
-            if (num) {
+            if (select) {
+                let options = Array.from(select.options);
+                let targetIdx = typeof val === 'number' ? val : options.findIndex(o => (o.text || '').toLowerCase().includes(String(val).toLowerCase()) || (o.value || '').toLowerCase().includes(String(val).toLowerCase()));
+                if (targetIdx >= 0 && targetIdx < options.length) {
+                    select.selectedIndex = targetIdx;
+                    select.dispatchEvent(new Event('input', { bubbles: true }));
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                    return true;
+                }
+            } else if (num) {
                 num.value = val;
                 num.dispatchEvent(new Event('input', { bubbles: true }));
                 num.dispatchEvent(new Event('change', { bubbles: true }));

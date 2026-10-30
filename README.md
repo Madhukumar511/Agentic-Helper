@@ -58,12 +58,10 @@
    cd Agentic-Helper
    ```
 
-2. **Create virtual environment and install**:
+2. **1-Click Setup**:
    ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -e .
-   playwright install chromium
+   ./setup.sh
+   # (Or: pip install -e . && playwright install chromium)
    ```
 
 3. **Launch Chrome/Chromium with Remote Debugging**:
@@ -81,10 +79,7 @@
    ```bash
    git clone https://github.com/Madhukumar511/Agentic-Helper.git
    cd Agentic-Helper
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -e .
-   playwright install chromium
+   ./setup.sh
    ```
 
 2. **Launch Google Chrome with Remote Debugging**:
@@ -96,23 +91,21 @@
 
 ### 🪟 Windows (PowerShell / Command Prompt)
 
-1. **Clone and setup**:
+1. **Clone and 1-Click Setup**:
    ```powershell
    git clone https://github.com/Madhukumar511/Agentic-Helper.git
    cd Agentic-Helper
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1
-   pip install -e .
-   playwright install chromium
+   .\setup.bat
    ```
 
-2. **Launch Google Chrome or Edge with Remote Debugging**:
+2. **1-Click Browser Launch**:
+   Double-click `launch_browser_windows.bat`, or run:
    ```powershell
    # Using Google Chrome:
-   & "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\tmp\agent_browser"
+   & "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="$env:TEMP\agent_browser"
 
    # OR using Microsoft Edge:
-   & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222 --user-data-dir="C:\tmp\agent_browser"
+   & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222 --user-data-dir="$env:TEMP\agent_browser"
    ```
 
 ---
