@@ -34,7 +34,7 @@ Unlike generic vision-based AI browser tools that simulate slow mouse movements 
    ```text
    /agentic-helper https://www.coursera.org/learn/your-course-name
    ```
-   *The AI agent automatically checks dependencies, launches Chrome on port 9222, opens the course, and solves the assessments for you!*
+   *The AI agent automatically detects your system default browser (Microsoft Edge, Google Chrome, Brave, or Vivaldi) on port 9222, opens the course, and solves the assessments for you!*
 
 ---
 
@@ -42,7 +42,7 @@ Unlike generic vision-based AI browser tools that simulate slow mouse movements 
 
 #### 🪟 Windows (1-Click)
 1. Double-click `setup.bat` (or run in PowerShell: `.\setup.bat`).
-2. Double-click `launch_browser_windows.bat` to launch Chrome on debug port 9222.
+2. Double-click `launch_browser_windows.bat` to launch your installed browser (Microsoft Edge, Chrome, Brave) into the visible desktop UI on debug port 9222.
 3. Open your assessment in that browser.
 
 #### 🐧 Linux / 🍎 macOS (1-Click)
@@ -50,9 +50,14 @@ Unlike generic vision-based AI browser tools that simulate slow mouse movements 
    ```bash
    chmod +x setup.sh && ./setup.sh
    ```
-2. Launch Chrome or Chromium with debugging:
+2. Launch Chrome, Brave, or Chromium with debugging:
    ```bash
    google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
+   # or Brave:
+   brave --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
+   # or Chromium:
+   chromium --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
+   ```
    ```
 
 ---

@@ -29,12 +29,46 @@ def is_browser_running(port: int = CDP_DEFAULT_PORT) -> bool:
         return False
 
 
+def get_windows_default_browser() -> Optional[str]:
+    """Retrieves the system default browser executable from the Windows Registry."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+        import re
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice"
+        )
+        prog_id, _ = winreg.QueryValueEx(key, "ProgId")
+        winreg.CloseKey(key)
+
+        cmd_key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, rf"{prog_id}\shell\open\command")
+        cmd_str, _ = winreg.QueryValueEx(cmd_key, "")
+        winreg.CloseKey(cmd_key)
+
+        m = re.search(r'"([^"]+)"', cmd_str)
+        if m and os.path.exists(m.group(1)):
+            return m.group(1)
+        parts = cmd_str.split()
+        if parts and os.path.exists(parts[0]):
+            return parts[0]
+    except Exception:
+        pass
+    return None
+
+
 def get_browser_candidates() -> List[str]:
-    """Finds available Chromium-based browser executables on the host OS."""
+    """Finds available browsers on the host OS, prioritizing user's system default."""
     candidates = []
 
     if sys.platform == "win32":
-        # Windows standard Chrome & Edge paths
+        # 1. System Default Browser via Registry
+        default_browser = get_windows_default_browser()
+        if default_browser and os.path.exists(default_browser):
+            candidates.append(default_browser)
+
+        # 2. Windows standard Chrome, Edge, Brave, Vivaldi paths
         local_app_data = os.environ.get("LOCALAPPDATA", r"C:\Users\Default\AppData\Local")
         program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
         program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
@@ -46,13 +80,14 @@ def get_browser_candidates() -> List[str]:
             os.path.join(program_files, "Microsoft", "Edge", "Application", "msedge.exe"),
             os.path.join(program_files_x86, "Microsoft", "Edge", "Application", "msedge.exe"),
             os.path.join(program_files, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+            os.path.join(local_app_data, "Vivaldi", "Application", "vivaldi.exe"),
         ]
         for p in paths:
-            if os.path.exists(p):
+            if os.path.exists(p) and p not in candidates:
                 candidates.append(p)
 
-        # Fallback to PATH lookup
-        for name in ["chrome.exe", "msedge.exe", "brave.exe"]:
+        # 3. Fallback to PATH lookup
+        for name in ["chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe", "chromium.exe"]:
             w = shutil.which(name)
             if w and w not in candidates:
                 candidates.append(w)
@@ -125,16 +160,23 @@ def launch_browser(url: Optional[str] = None, port: int = CDP_DEFAULT_PORT) -> T
         f"--user-data-dir={user_data}",
         "--no-first-run",
         "--no-default-browser-check",
+        "--new-window",
+        "--start-maximized",
         target_url
     ]
 
     try:
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
+        if sys.platform == "win32":
+            # On Windows, launch via desktop shell start command to guarantee interactive UI window activation
+            args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in cmd[1:]])
+            subprocess.Popen(f'cmd.exe /c start "" "{browser_bin}" {args_str}', shell=True)
+        else:
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
     except Exception as e:
         return False, f"Failed to launch browser '{browser_bin}': {e}"
 

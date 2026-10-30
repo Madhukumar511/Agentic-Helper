@@ -1,38 +1,92 @@
 @echo off
+setlocal enabledelayedexpansion
 echo ========================================================
-echo   Agentic-Helper: Windows Browser Launcher (Port 9222)
+echo   Agentic-Helper: Universal Windows Browser Launcher
+echo   (Detects Edge, Chrome, Brave, Vivaldi, Opera, or Default)
 echo ========================================================
 echo.
 
 set USER_DIR=%TEMP%\agent_browser
+set TARGET_URL=https://www.coursera.org
+if not "%~1"=="" set TARGET_URL=%~1
 
-REM 1. Try Google Chrome 64-bit
-if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
-    echo Launching Google Chrome on port 9222...
-    start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%USER_DIR%"
-    goto done
+set BROWSER_EXE=
+
+REM 1. Check Microsoft Edge (Pre-installed on all Windows 10/11)
+if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" (
+    set "BROWSER_EXE=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
+    set "BROWSER_NAME=Microsoft Edge (64-bit)"
+    goto found
+)
+if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" (
+    set "BROWSER_EXE=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
+    set "BROWSER_NAME=Microsoft Edge (x86)"
+    goto found
 )
 
-REM 2. Try Google Chrome 32-bit
-if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" (
-    echo Launching Google Chrome (x86) on port 9222...
-    start "" "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%USER_DIR%"
-    goto done
+REM 2. Check Google Chrome
+if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_EXE=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
+    set "BROWSER_NAME=Google Chrome (64-bit)"
+    goto found
+)
+if exist "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_EXE=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
+    set "BROWSER_NAME=Google Chrome (x86)"
+    goto found
+)
+if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe" (
+    set "BROWSER_EXE=%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
+    set "BROWSER_NAME=Google Chrome (User Install)"
+    goto found
 )
 
-REM 3. Try Microsoft Edge
-if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
-    echo Launching Microsoft Edge on port 9222...
-    start "" "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222 --user-data-dir="%USER_DIR%"
-    goto done
+REM 3. Check Brave Browser
+if exist "%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe" (
+    set "BROWSER_EXE=%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe"
+    set "BROWSER_NAME=Brave Browser"
+    goto found
+)
+if exist "%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe" (
+    set "BROWSER_EXE=%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe"
+    set "BROWSER_NAME=Brave Browser (User Install)"
+    goto found
 )
 
-echo ERROR: Neither Google Chrome nor Microsoft Edge was found in standard locations.
+REM 4. Check Vivaldi
+if exist "%LOCALAPPDATA%\Vivaldi\Application\vivaldi.exe" (
+    set "BROWSER_EXE=%LOCALAPPDATA%\Vivaldi\Application\vivaldi.exe"
+    set "BROWSER_NAME=Vivaldi"
+    goto found
+)
+
+REM 5. Fallback via PATH lookup
+for %%b in (chrome.exe msedge.exe brave.exe vivaldi.exe) do (
+    where %%b >nul 2>nul
+    if !errorlevel! equ 0 (
+        for /f "delims=" %%p in ('where %%b') do (
+            set "BROWSER_EXE=%%p"
+            set "BROWSER_NAME=%%b"
+            goto found
+        )
+    )
+)
+
+echo [ERROR] No supported Chromium-based browser (Edge, Chrome, Brave, Vivaldi) found.
 echo Please install Google Chrome or Microsoft Edge.
 pause
+exit /b 1
 
-:done
+:found
+echo [✓] Detected: !BROWSER_NAME!
+echo [*] Launching into visible desktop UI on remote debugging port 9222...
+
+REM Launch into interactive desktop session and bring to foreground UI
+start "" /MAX "!BROWSER_EXE!" --remote-debugging-port=9222 --user-data-dir="%USER_DIR%" --new-window --start-maximized --no-first-run --no-default-browser-check "%TARGET_URL%"
+
 echo.
-echo Browser started successfully with remote debugging on http://127.0.0.1:9222!
-echo You can now run your AI agent in Antigravity or Cursor.
 echo ========================================================
+echo   Browser started successfully on http://127.0.0.1:9222!
+echo   Window is visible on your screen.
+echo ========================================================
+exit /b 0
