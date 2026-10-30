@@ -38,6 +38,8 @@ browser_profile/
 *.svg
 *.json
 !quiz_pilot/**/*.json
+!.vscode/*.json
+!.cursor/*.json
 *.txt
 *.log
 HW*_ANSWERS.md
@@ -45,7 +47,6 @@ FINAL_EXAM_ANSWERS.md
 
 # IDEs
 .idea/
-.vscode/
 *.swp
 *.swo
 

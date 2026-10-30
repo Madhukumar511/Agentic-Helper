@@ -26,3 +26,6 @@ dependencies = [
 agentic-helper = "quiz_pilot.cli:main"
 agentic-helper-mcp = "quiz_pilot.mcp_server:run_mcp_server"
 quiz-pilot = "quiz_pilot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["quiz_pilot*"]

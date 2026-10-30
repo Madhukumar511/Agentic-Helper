@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agentic-helper": {
+      "command": "${workspaceFolder}/.venv/bin/agentic-helper-mcp",
+      "args": []
+    }
+  }
+}

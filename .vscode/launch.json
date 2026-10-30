@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug MCP Server",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/quiz_pilot/mcp_server.py",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug Fast Diagram Parser",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/quiz_pilot/diagram_parser.py",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Run All Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "unittest",
+      "args": ["discover", "-s", "tests"],
+      "console": "integratedTerminal"
+    }
+  ]
+}
