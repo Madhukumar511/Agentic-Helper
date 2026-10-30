@@ -85,11 +85,13 @@ Once logged in:
    questions = adapter.extract_questions()
    ```
 
-3. **Fast 3-Attempt Heuristic**:
-   - Solve with direct reasoning + local graph/diagram algorithms (`<200ms`).
-   - Fill answers using `adapter.fill_answer(idx, val)` or `solve_batch()`.
-   - Submit via `adapter.submit_assessment()`.
-   - Check grade via `adapter.extract_feedback()`.
+3. **Fast Diagram & Batch Answering (<150ms)**:
+   - When questions contain diagrams, figures, or network topologies:
+     - Check `q['diagram_meta']` or prompt `[Figure: ...]` text for immediate topology/spacetime descriptions.
+     - Call `solve_diagram(image_path=img_url, question_prompt=prompt, options=options)` to get the analytical solution in `<100ms`.
+     - NEVER stall, run slow OCR, download images sequentially, or spend minutes analyzing images manually.
+   - Fill all answers in a single atomic batch via `adapter.batch_fill_answers(answers, auto_submit=True)` or `solve_batch(answers, auto_submit=True)`.
+   - Immediately verify grade via `adapter.extract_feedback()`.
 
 4. **Pass & Zero-Artifact Purge**:
    - When passed ($\ge 80\%$ or green pass banner), run `FastAttemptManager().purge_all()`.

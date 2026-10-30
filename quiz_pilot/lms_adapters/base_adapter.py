@@ -27,6 +27,15 @@ class BaseLMSAdapter(ABC):
         """Selects radio/checkbox or types numeric/text answer for the question."""
         pass
 
+    def batch_fill_answers(self, answers: Dict[int, Any], auto_submit: bool = False) -> Dict[str, Any]:
+        """Default batch filling: iterates over individual fill_answer calls."""
+        res = {}
+        for q_idx, val in answers.items():
+            res[str(q_idx)] = self.fill_answer(int(q_idx), val)
+        if auto_submit:
+            self.submit_assessment()
+        return res
+
     @abstractmethod
     def submit_assessment(self) -> bool:
         """Triggers assessment submission with any required confirmation steps."""

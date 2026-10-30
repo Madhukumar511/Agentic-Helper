@@ -170,12 +170,17 @@ class AsyncTabScheduler:
                     for q in questions:
                         answers[q["index"]] = 0
 
-                # 3. Fill Answers in Tab DOM
-                for q_idx, ans_val in answers.items():
-                    await page.evaluate('''([idx, val]) => {
-                        let allGroups = Array.from(document.querySelectorAll('div[role="radiogroup"], div[role="group"]'));
-                        let leafGroups = allGroups.filter(g => !allGroups.some(other => other !== g && g.contains(other)));
-                        if (idx >= leafGroups.length) return false;
+                # 3. Fill Answers in Tab DOM in a single atomic batch (<30ms)
+                payload = {str(k): v for k, v in answers.items()}
+                await page.evaluate('''([ansMap]) => {
+                    let norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    let allGroups = Array.from(document.querySelectorAll('div[role="radiogroup"], div[role="group"]'));
+                    let leafGroups = allGroups.filter(g => !allGroups.some(other => other !== g && g.contains(other)));
+                    
+                    for (let k of Object.keys(ansMap)) {
+                        let idx = parseInt(k, 10);
+                        let val = ansMap[k];
+                        if (idx >= leafGroups.length) continue;
                         let g = leafGroups[idx];
                         
                         let radios = Array.from(g.querySelectorAll('input[type="radio"], [role="radio"]'));
@@ -184,23 +189,52 @@ class AsyncTabScheduler:
                         
                         if (select) {
                             let options = Array.from(select.options);
-                            let targetIdx = typeof val === 'number' ? val : 0;
+                            let targetIdx = typeof val === 'number' ? val : -1;
+                            if (typeof val === 'string') {
+                                let vNorm = norm(val);
+                                targetIdx = options.findIndex(o => norm(o.text).includes(vNorm) || norm(o.value).includes(vNorm));
+                            }
                             if (targetIdx >= 0 && targetIdx < options.length) {
                                 select.selectedIndex = targetIdx;
                                 select.dispatchEvent(new Event('input', { bubbles: true }));
                                 select.dispatchEvent(new Event('change', { bubbles: true }));
-                                return true;
                             }
                         } else if (radios.length > 0) {
-                            let targetIdx = typeof val === 'number' ? val : 0;
+                            let targetIdx = typeof val === 'number' ? val : -1;
+                            if (typeof val === 'string') {
+                                let vNorm = norm(val);
+                                targetIdx = radios.findIndex(r => {
+                                    let l = r.closest('label') || r.parentElement;
+                                    return l && norm(l.innerText).includes(vNorm);
+                                });
+                            }
+                            if (targetIdx < 0 && typeof val === 'number' && val < radios.length) {
+                                targetIdx = val;
+                            }
                             if (targetIdx >= 0 && targetIdx < radios.length) {
                                 radios[targetIdx].click();
-                                return true;
+                            }
+                        } else if (checkboxes.length > 0) {
+                            let items = Array.isArray(val) ? val : [val];
+                            for (let item of items) {
+                                let targetIdx = typeof item === 'number' ? item : -1;
+                                if (typeof item === 'string') {
+                                    let iNorm = norm(item);
+                                    targetIdx = checkboxes.findIndex(cb => {
+                                        let l = cb.closest('label') || cb.parentElement;
+                                        return l && (norm(l.innerText).includes(iNorm) || iNorm.includes(norm(l.innerText)));
+                                    });
+                                }
+                                if (targetIdx >= 0 && targetIdx < checkboxes.length) {
+                                    let cb = checkboxes[targetIdx];
+                                    if (!cb.checked && cb.getAttribute('aria-checked') !== 'true') {
+                                        cb.click();
+                                    }
+                                }
                             }
                         }
-                        return false;
-                    }''', [int(q_idx), ans_val])
-                    await asyncio.sleep(0.05)
+                    }
+                }''', [payload])
 
                 # 4. Check Honor Code & Submit if requested
                 if auto_submit:
@@ -213,7 +247,7 @@ class AsyncTabScheduler:
                                  });
                         if (cb && !cb.checked) cb.click();
                     }''')
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.3)
 
                     # Click submit button
                     await page.evaluate('''() => {
@@ -223,7 +257,7 @@ class AsyncTabScheduler:
                                         );
                         if (submitBtn) submitBtn.click();
                     }''')
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(0.5)
 
                     # Click dialog confirmation if modal appears
                     await page.evaluate('''() => {
@@ -234,7 +268,7 @@ class AsyncTabScheduler:
                             submits[submits.length - 1].click();
                         }
                     }''')
-                    await asyncio.sleep(3.0)
+                    await asyncio.sleep(1.0)
 
                     result["submitted"] = True
 

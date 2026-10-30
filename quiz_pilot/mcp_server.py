@@ -80,13 +80,18 @@ TOOLS = [
     },
     {
         "name": "solve_batch",
-        "description": "Fills multiple question answers in one fast batch execution.",
+        "description": "Fills multiple question answers in one ultra-fast atomic DOM execution (<50ms). Optionally marks and submits immediately.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "answers": {
                     "type": "object",
                     "description": "Map of question_index (int or str) to answer value"
+                },
+                "auto_submit": {
+                    "type": "boolean",
+                    "description": "Whether to tick honor code and submit immediately in the same call (default: false)",
+                    "default": False
                 }
             },
             "required": ["answers"]
@@ -140,11 +145,23 @@ TOOLS = [
     },
     {
         "name": "solve_diagram",
-        "description": "Parses space-time or distributed system diagram image into graph structure in milliseconds.",
+        "description": "Ultra-fast (<150ms) diagram & network topology solver. Supports local paths, remote HTTP/HTTPS URLs, and base64. Solves spacetime diagrams (Lamport/vector clocks, cuts), network topologies (Fat-Tree, Clos, Leaf-Spine), and matches against quiz options.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "image_path": {"type": "string", "description": "Absolute path to diagram image"}
+                "image_path": {
+                    "type": "string",
+                    "description": "Local file path, HTTP/HTTPS URL, or base64 data URI of the diagram image"
+                },
+                "question_prompt": {
+                    "type": "string",
+                    "description": "Optional quiz question prompt text asking about the diagram"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of multiple choice option strings to match against"
+                }
             },
             "required": ["image_path"]
         }
@@ -254,9 +271,19 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
 
     if name == "solve_diagram":
         img_path = arguments["image_path"]
-        parsed = diagram_parser.parse_spacetime_diagram(img_path)
-        solved = diagram_parser.solve_fast_lamport(parsed)
-        return {"content": [{"type": "text", "text": json.dumps({"parsed": parsed, "solution": solved}, indent=2)}]}
+        q_prompt = arguments.get("question_prompt")
+        opts = arguments.get("options")
+        if q_prompt and opts:
+            res = diagram_parser.solve_diagram_question(
+                image_source=img_path,
+                question_prompt=q_prompt,
+                options=opts
+            )
+            return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+        else:
+            parsed = diagram_parser.parse_spacetime_diagram(img_path)
+            solved = diagram_parser.solve_fast_lamport(parsed)
+            return {"content": [{"type": "text", "text": json.dumps({"parsed": parsed, "solution": solved}, indent=2)}]}
 
     if name == "inspect_all_tabs":
         scheduler = AsyncTabScheduler(cdp_url=cdp_url)
@@ -295,10 +322,15 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
 
         elif name == "solve_batch":
             answers = arguments["answers"]
-            results = {}
-            for q_idx, val in answers.items():
-                ok = adapter.fill_answer(int(q_idx), val)
-                results[q_idx] = ok
+            auto_sub = arguments.get("auto_submit", False)
+            if hasattr(adapter, "batch_fill_answers"):
+                results = adapter.batch_fill_answers(answers, auto_submit=auto_sub)
+            else:
+                results = {}
+                for q_idx, val in answers.items():
+                    results[str(q_idx)] = adapter.fill_answer(int(q_idx), val)
+                if auto_sub:
+                    adapter.submit_assessment()
             return {"content": [{"type": "text", "text": json.dumps(results, indent=2)}]}
 
         elif name == "submit_assessment":

@@ -65,7 +65,22 @@ class CourseraAdapter(BaseLMSAdapter):
                     }).filter(t => t.length > 0 && !t.includes("I understand") && !t.includes("Do you understand?"));
                 }
                 
-                const imgs = Array.from((p || g).querySelectorAll('img')).map(img => img.src);
+                let imgEls = Array.from((p || g).querySelectorAll('img, svg'));
+                let imgs = [];
+                let diagramMeta = [];
+                imgEls.forEach(el => {
+                    let src = el.src || '';
+                    let alt = el.alt || el.getAttribute('aria-label') || el.getAttribute('title') || '';
+                    if (src) imgs.push(src);
+                    if (alt && !fullText.includes(alt)) {
+                        fullText += " [Figure: " + alt.trim() + "]";
+                    }
+                    diagramMeta.push({
+                        tag: el.tagName.toLowerCase(),
+                        src: src,
+                        alt: alt
+                    });
+                });
                 
                 return {
                     index: idx,
@@ -73,7 +88,8 @@ class CourseraAdapter(BaseLMSAdapter):
                     type: qType,
                     prompt: fullText,
                     options: options,
-                    images: imgs
+                    images: imgs,
+                    diagram_meta: diagramMeta
                 };
             });
         }''')
@@ -87,7 +103,7 @@ class CourseraAdapter(BaseLMSAdapter):
             if (idx >= leafGroups.length) return false;
             
             let g = leafGroups[idx];
-            g.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            g.scrollIntoView({ behavior: 'auto', block: 'center' });
             
             const num = g.querySelector('input[type="number"]');
             const txt = g.querySelector('input[type="text"]');
@@ -159,13 +175,113 @@ class CourseraAdapter(BaseLMSAdapter):
             return false;
         }''', [question_index, value])
 
+    def batch_fill_answers(self, answers: Dict[Any, Any], auto_submit: bool = False) -> Dict[str, Any]:
+        """
+        Ultra-fast atomic batch answer filling in a single DOM execution (<50ms).
+        Optionally signs honor code and triggers submission immediately.
+        """
+        payload = {str(k): v for k, v in answers.items()}
+        results = self.page.evaluate('''([ansMap, doSubmit]) => {
+            let norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+            let allGroups = Array.from(document.querySelectorAll('div[role="radiogroup"], div[role="group"]'));
+            let leafGroups = allGroups.filter(g => !allGroups.some(other => other !== g && g.contains(other)));
+            
+            let fillRes = {};
+            for (let k of Object.keys(ansMap)) {
+                let idx = parseInt(k, 10);
+                let val = ansMap[k];
+                if (idx >= leafGroups.length) {
+                    fillRes[idx] = false;
+                    continue;
+                }
+                let g = leafGroups[idx];
+                
+                const num = g.querySelector('input[type="number"]');
+                const txt = g.querySelector('input[type="text"]');
+                const radios = Array.from(g.querySelectorAll('input[type="radio"], [role="radio"]'));
+                const checkboxes = Array.from(g.querySelectorAll('input[type="checkbox"], [role="checkbox"]'));
+                const select = g.querySelector('select');
+                
+                let ok = false;
+                if (select) {
+                    let options = Array.from(select.options);
+                    let targetIdx = typeof val === 'number' ? val : -1;
+                    if (typeof val === 'string') {
+                        let vNorm = norm(val);
+                        targetIdx = options.findIndex(o => norm(o.text).includes(vNorm) || norm(o.value).includes(vNorm));
+                    }
+                    if (targetIdx >= 0 && targetIdx < options.length) {
+                        select.selectedIndex = targetIdx;
+                        select.dispatchEvent(new Event('input', { bubbles: true }));
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                        ok = true;
+                    }
+                } else if (num || txt || (radios.length === 0 && checkboxes.length === 0 && g.querySelector('input'))) {
+                    let targetInput = num || txt || g.querySelector('input');
+                    let nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                    if (nativeSetter) {
+                        nativeSetter.call(targetInput, String(val));
+                    } else {
+                        targetInput.value = String(val);
+                    }
+                    targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    ok = true;
+                } else if (radios.length > 0) {
+                    let targetIdx = typeof val === 'number' ? val : -1;
+                    if (typeof val === 'string') {
+                        let vNorm = norm(val);
+                        targetIdx = radios.findIndex(r => {
+                            let l = r.closest('label') || r.parentElement;
+                            return l && norm(l.innerText).includes(vNorm);
+                        });
+                    }
+                    if (targetIdx < 0 && typeof val === 'number' && val < radios.length) {
+                        targetIdx = val;
+                    }
+                    if (targetIdx >= 0 && targetIdx < radios.length) {
+                        radios[targetIdx].click();
+                        ok = true;
+                    }
+                } else if (checkboxes.length > 0) {
+                    let items = Array.isArray(val) ? val : [val];
+                    for (let item of items) {
+                        let targetIdx = typeof item === 'number' ? item : -1;
+                        if (typeof item === 'string') {
+                            let iNorm = norm(item);
+                            targetIdx = checkboxes.findIndex(cb => {
+                                let l = cb.closest('label') || cb.parentElement;
+                                return l && (norm(l.innerText).includes(iNorm) || iNorm.includes(norm(l.innerText)));
+                            });
+                        }
+                        if (targetIdx >= 0 && targetIdx < checkboxes.length) {
+                            let cb = checkboxes[targetIdx];
+                            let isChecked = cb.checked || cb.getAttribute('aria-checked') === 'true';
+                            if (!isChecked) {
+                                cb.click();
+                            }
+                            ok = true;
+                        }
+                    }
+                }
+                fillRes[idx] = ok;
+            }
+
+            return fillRes;
+        }''', [payload, auto_submit])
+
+        if auto_submit:
+            self.submit_assessment()
+
+        return results
+
     def submit_assessment(self) -> bool:
-        # Dismiss any leftover warning modal by clicking cancel or submit
+        # Dismiss any leftover warning modal
         self.page.evaluate('''() => {
             let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
             if (cancelBtn) cancelBtn.click();
         }''')
-        time.sleep(1)
+        time.sleep(0.3)
 
         # 1. Check Honor Code agreement checkbox (#agreement-checkbox-base)
         self.page.evaluate('''() => {
@@ -175,14 +291,14 @@ class CourseraAdapter(BaseLMSAdapter):
                          return l.toLowerCase().includes('understand and agree') || l.toLowerCase().includes('honor code');
                      });
             if (cb) {
-                cb.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                cb.scrollIntoView({ behavior: 'auto', block: 'center' });
                 let isChecked = cb.checked || cb.getAttribute('aria-checked') === 'true';
                 if (!isChecked) {
                     cb.click();
                 }
             }
         }''')
-        time.sleep(1.5)
+        time.sleep(0.4)
         
         # 2. Click Submit button
         clicked = self.page.evaluate('''() => {
@@ -191,7 +307,7 @@ class CourseraAdapter(BaseLMSAdapter):
                                 b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
                             );
             if (submitBtn) {
-                submitBtn.scrollIntoView();
+                submitBtn.scrollIntoView({ behavior: 'auto' });
                 submitBtn.click();
                 return true;
             }
@@ -199,7 +315,7 @@ class CourseraAdapter(BaseLMSAdapter):
         }''')
         
         if clicked:
-            time.sleep(2)
+            time.sleep(0.8)
             # Dismiss confirmation modals if any ("Do you still want to submit?" -> click Submit)
             self.page.evaluate('''() => {
                 let dialog = document.querySelector('div[role="dialog"], [data-testid="assignment-view-tunnel-vision"]');

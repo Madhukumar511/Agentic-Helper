@@ -5,9 +5,9 @@
 
 [![GitHub License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)
-[![Playwright](https://img.shields.io/badge/Playwright-Chromium-orange.svg)](https://playwright.dev)
+[![Playwright](https://img.shields.io/badge/Playwright-CDP%20Engine-orange.svg)](https://playwright.dev)
 [![Antigravity IDE](https://img.shields.io/badge/Antigravity-Zero--Touch%20Skill-purple.svg)](GEMINI.md)
-[![Tests Passing](https://img.shields.io/badge/Tests-14%2F14%20Passing-success.svg)](tests/)
+[![Tests Passing](https://img.shields.io/badge/Tests-16%2F16%20Passing-success.svg)](tests/)
 
 ---
 
@@ -50,14 +50,13 @@ Unlike generic vision-based AI browser tools that simulate slow mouse movements 
    ```bash
    chmod +x setup.sh && ./setup.sh
    ```
-2. Launch Chrome, Brave, or Chromium with debugging:
+2. Launch your installed browser (Chrome, Edge, Brave, or Vivaldi) with debugging:
    ```bash
    google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
+   # or Microsoft Edge:
+   microsoft-edge --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
    # or Brave:
-   brave --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
-   # or Chromium:
-   chromium --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
-   ```
+   brave-browser --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser &
    ```
 
 ---
@@ -68,7 +67,7 @@ Agentic-Helper features an **Async Multi-Tab Queue Scheduler** (`AsyncTabSchedul
 
 ```mermaid
 flowchart TD
-    Browser["Chromium Browser (CDP Port 9222)"] --> Tab1["Tab 1: Course A Quiz"]
+    Browser["System Browser: Edge / Chrome / Brave (CDP Port 9222)"] --> Tab1["Tab 1: Course A Quiz"]
     Browser --> Tab2["Tab 2: Course B Quiz"]
     Browser --> Tab3["Tab 3: Course C Quiz"]
 
@@ -116,10 +115,10 @@ Agentic-Helper includes a native **Model Context Protocol (MCP)** server for **A
 | `solve_parallel_quizzes` | `max_concurrency, auto_submit` | Concurrently solves and submits all open assessment tabs. |
 | `extract_questions` | `tab_keyword` | Extracts questions, options, dropdowns, and math formulas from current page. |
 | `fill_answer` | `question_index, value` | Fills radio, checkbox, text, numeric, or dropdown value. |
-| `solve_batch` | `answers` | Batch-fills multiple answers in a single call (<100ms). |
+| `solve_batch` | `answers, auto_submit` | Ultra-fast atomic DOM fill (<30ms). Optionally ticks honor code and submits immediately. |
 | `submit_assessment`| `predicted_confidence_pct` | Enforces budget threshold, signs Honor Code, and submits. |
 | `get_feedback` | — | Extracts final score percentage and pass/fail badges. |
-| `solve_diagram` | `image_path` | Sub-second OpenCV/NumPy spacetime diagram parser (<200ms). |
+| `solve_diagram` | `image_path, question_prompt, options` | Sub-second (<100ms) diagram & network topology solver. Resolves spacetime, Fat-Tree, Clos, and maps directly to options. |
 | `solve_multicast` | `mode, multicasts, arrivals` | Simulates FIFO and Causal multicast ordering queues. |
 
 ### Configuration:
@@ -187,7 +186,7 @@ causal = sim.simulate_causal(
 
 ## 🧪 Testing
 
-All 14 unit tests pass in under 1 second:
+All 16 unit tests pass in under 1 second:
 ```bash
 pytest
 # OR

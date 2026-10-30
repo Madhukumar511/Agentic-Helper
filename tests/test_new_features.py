@@ -119,6 +119,40 @@ class TestAgenticHelperFeatures(unittest.TestCase):
         solved = parser.solve_fast_lamport(res)
         self.assertIn("timestamps", solved)
 
+    def test_diagram_fat_tree_and_fast_question_solver(self):
+        parser = LocalDiagramParser()
+        ft = parser.solve_fat_tree(k=4)
+        self.assertEqual(ft["core_switches"], 4)
+        self.assertEqual(ft["aggregation_switches"], 8)
+        self.assertEqual(ft["edge_switches"], 8)
+        self.assertEqual(ft["total_switches"], 20)
+        self.assertEqual(ft["total_hosts"], 16)
+
+        # Fast question solver for Fat-Tree
+        res = parser.solve_diagram_question(
+            image_source=None,
+            question_prompt="In a 4-ary fat-tree network, what is the total number of core switches?",
+            options=["2", "4", "8", "16"]
+        )
+        self.assertTrue(res["success"])
+        self.assertEqual(res["selected_option"], "4")
+        self.assertEqual(res["selected_index"], 1)
+        self.assertEqual(res["domain"], "fat_tree")
+        self.assertLess(res["execution_time_ms"], 100)
+
+    def test_diagram_base64_data_uri_support(self):
+        import io, base64
+        # Generate small 10x10 in-memory png
+        img = Image.new("L", (10, 10), color=255)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
+        data_uri = f"data:image/png;base64,{b64_str}"
+
+        parser = LocalDiagramParser()
+        res = parser.parse_spacetime_diagram(data_uri)
+        self.assertIn("total_events", res)
+
     def test_mcp_server_tools_registered(self):
         tool_names = [t["name"] for t in TOOLS]
         self.assertIn("launch_browser", tool_names)
