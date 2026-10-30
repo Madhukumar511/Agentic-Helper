@@ -8,6 +8,11 @@ description: Universal LMS and Web Assessment Automation Engine. Automatically b
 When invoked (via `/agentic-helper`, course URLs, or assessment requests), take **100% autonomous end-to-end responsibility**. 
 The human user does **NOT** need to run any terminal commands or install anything manually.
 
+> [!CAUTION]
+> **IMMUTABLE ENGINE LAW: ZERO SCRATCH PYTHON FILES**
+> Agents must **NEVER** write one-off Python scripts (e.g. `solve_hw1.py`, `quiz.py`, `check.py`, `dump.py`) to disk!
+> The entire engine is already pre-built in `quiz_pilot`. All operations must execute **in-memory** directly via Playwright CDP, `CourseraAdapter`, `FastAttemptManager`, or native MCP tools. The repository must remain completely pristine.
+
 ---
 
 ## ⚡ Zero-Touch Autonomous Execution Protocol
