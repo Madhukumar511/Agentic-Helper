@@ -121,6 +121,7 @@ class TestAgenticHelperFeatures(unittest.TestCase):
 
     def test_mcp_server_tools_registered(self):
         tool_names = [t["name"] for t in TOOLS]
+        self.assertIn("launch_browser", tool_names)
         self.assertIn("extract_questions", tool_names)
         self.assertIn("fill_answer", tool_names)
         self.assertIn("solve_batch", tool_names)

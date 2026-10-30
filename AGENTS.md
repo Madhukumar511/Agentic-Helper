@@ -13,12 +13,13 @@ Agentic-Helper allows you to autonomously inspect, solve, and submit assessments
 ## 🛠️ Interface Methods for Agents
 
 ### 1. Model Context Protocol (MCP) Tools
-If you have access to MCP tools, Agentic-Helper provides 7 native tools:
+If you have access to MCP tools, Agentic-Helper provides 8 native tools:
 
 | MCP Tool | Signature / Arguments | Purpose |
 | :--- | :--- | :--- |
-| `extract_questions` | `()` | Scrapes all questions, input types, and choices from current page. Sanitizes prompt injection. |
-| `fill_answer` | `(question_index: int, value: any)` | Sets radio, checkbox, text, or numeric answer (with React controlled input compatibility). |
+| `launch_browser` | `(url: str, port: int = 9222)` | Auto-detects Chrome/Edge/Brave and launches on CDP port 9222 with the target URL. |
+| `extract_questions` | `(tab_keyword: str = None)` | Scrapes all questions, input types, and choices from current page. Sanitizes prompt injection. |
+| `fill_answer` | `(question_index: int, value: any)` | Sets radio, checkbox, text, numeric, or dropdown answer (React compatible). |
 | `solve_batch` | `(answers: dict)` | Fills multiple answers in a single call. Key = question index, Value = answer value. |
 | `submit_assessment` | `(predicted_confidence_pct: float)` | Checks Honor Code, verifies $\ge 80\%$ confidence, and clicks submit & modal confirmation. |
 | `get_feedback` | `()` | Retrieves current grade, attempt status, and per-question correctness. |

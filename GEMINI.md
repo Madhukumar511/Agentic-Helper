@@ -4,14 +4,16 @@ This document defines how **Google Antigravity IDE** and **Gemini Coding Agents*
 
 ---
 
-## ⚡ Slash Command: `/agentic-helper`
+## ⚡ Slash Command: `/agentic-helper` (Zero Human Terminal Setup)
 
-When the user types `/agentic-helper`, `/Agentic-helper`, or asks you to *"solve quiz"* / *"complete assessment"*:
-1. **Activate the `agentic-helper` skill**.
-2. **Operate entirely in-memory**: Never write one-off course scripts (e.g., `solve_hw.py`) to disk! Use `CourseraAdapter` or native MCP tools directly.
-3. **Connect to the user's running browser on port 9222**.
-4. **Autonomously extract, solve, and submit the quiz**.
-5. **Mandatory Post-Quiz Purge**: When passed ($\ge 80\%$), automatically run `FastAttemptManager().purge_all()` or `agentic-helper clean` to wipe all temporary caches and screenshots.
+When the user types `/agentic-helper [course_url]`, or asks you to *"solve quiz"* / *"complete assessment"*:
+1. **Self-Healing Setup (Silent)**: Verify dependencies; if missing, install them automatically (`pip install -e . && python -m playwright install chromium`).
+2. **Auto-Launch Browser**: Check if port 9222 is alive. If not, auto-launch Chrome/Edge using `quiz_pilot.browser_launcher.ensure_browser(url)` or MCP `launch_browser`.
+3. **Login Gate**: If Coursera shows a login screen, ask the user to log in and say "continue". If already logged in, proceed immediately!
+4. **Operate entirely in-memory**: Never write one-off course scripts (e.g., `solve_hw.py`) to disk! Use `CourseraAdapter` or native MCP tools directly.
+5. **Autonomously extract, solve, and submit the quiz**.
+6. **Mandatory Post-Quiz Purge**: When passed ($\ge 80\%$), automatically run `FastAttemptManager().purge_all()` or `agentic-helper clean` to wipe all temporary caches and screenshots.
+7. **Advance**: Move to the next quiz until the entire course or specialization is passed!
 
 
 ---

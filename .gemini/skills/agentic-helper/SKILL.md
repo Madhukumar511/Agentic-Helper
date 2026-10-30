@@ -1,109 +1,105 @@
 ---
 name: agentic-helper
-description: Universal LMS and Web Assessment Automation Engine. Automatically connects to live Chrome/Chromium via CDP, extracts questions, solves domain/graph/theory problems, and submits quizzes across Coursera, Canvas, Moodle, Blackboard, Google Forms, and custom web assessments. Use whenever the user types /agentic-helper, /Agentic-helper, "solve quiz", "complete assessment", "do coursera quiz", "automate exam", or asks the agent to autonomously complete an online assessment.
+description: Universal LMS and Web Assessment Automation Engine. Automatically bootstraps dependencies, launches browser with remote debugging port 9222, connects to Coursera/Canvas, waits for login if needed, extracts questions, solves domain/graph/theory problems, and submits quizzes across Coursera, Canvas, Moodle, Blackboard, Google Forms, and custom web assessments. Use whenever the user types /agentic-helper, /Agentic-helper, "solve quiz", "complete assessment", "do coursera quiz", "automate exam", or asks the agent to autonomously complete an online assessment.
 ---
 
 # Agentic-Helper: Autonomous LMS Assessment Engine
 
-When invoked (via `/agentic-helper` or quiz automation requests), take autonomous control to solve and submit assessments across **Coursera**, **Canvas**, **Moodle**, **Blackboard**, and **Google Forms** with zero user effort.
+When invoked (via `/agentic-helper`, course URLs, or assessment requests), take **100% autonomous end-to-end responsibility**. 
+The human user does **NOT** need to run any terminal commands or install anything manually.
 
 ---
 
-## 🚀 Autonomous Execution Workflow
+## ⚡ Zero-Touch Autonomous Execution Protocol
 
-### Step 1: Detect Live Browser Session (CDP) & Active Quiz Tab
-Verify or connect to the user's running browser session on remote debugging port `9222`. Scan all tabs to find the active assessment tab:
-
-```python
-from playwright.sync_api import sync_playwright
-from quiz_pilot.lms_adapters import get_lms_adapter
-from quiz_pilot.attempt_protector import FastAttemptManager
-
-with sync_playwright() as p:
-    browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-    
-    # Intelligently locate the active assessment tab across all open windows & tabs
-    page = None
-    lms_keywords = ["coursera", "canvas", "moodle", "blackboard", "exam", "quiz", "assessment", "forms"]
-    for ctx in browser.contexts:
-        for p_tab in ctx.pages:
-            try:
-                if any(k in p_tab.url.lower() or k in p_tab.title().lower() for k in lms_keywords):
-                    page = p_tab
-                    break
-            except Exception:
-                pass
-        if page:
-            break
-    if not page and browser.contexts and browser.contexts[0].pages:
-        page = browser.contexts[0].pages[0]
-```
-
-*If no browser is listening on 9222, launch one using:*
+### Phase 0: Self-Healing Environment Setup (Run Silently)
+Before anything else, verify that required dependencies exist. If not, install them in the background without asking the user:
 ```bash
-google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser <QUIZ_URL> &
-# OR Chromium:
-chromium --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser <QUIZ_URL> &
+python3 -c "import playwright" 2>/dev/null || (pip install -e . && python3 -m playwright install chromium)
+# On Windows:
+python -c "import playwright" 2>nul || (pip install -e . && python -m playwright install chromium)
 ```
 
 ---
 
-### Step 2: Auto-Detect Platform & Extract Questions
-Agentic-Helper automatically chooses the correct LMS driver:
-
+### Phase 1: Autonomous Browser Launch & URL Navigation
+Check if the debugging browser is running. If not, **launch it automatically**:
 ```python
-adapter = get_lms_adapter(page)
-questions = adapter.extract_questions()
-print(f"Extracted {len(questions)} questions on {adapter.__class__.__name__}")
+from quiz_pilot.browser_launcher import ensure_browser, is_browser_running
+
+# Launch Chrome/Edge with port 9222 and open target URL (or default Coursera)
+course_url = "<URL_PROVIDED_BY_USER_OR_COURSERA>"
+ensure_browser(url=course_url, port=9222)
 ```
-
-*Features of Extractor:*
-- **Anti-Prompt-Injection**: Automatically strips honeypots and integrity warning traps before sending prompts to reasoning.
-- **Leaf-Group Traversal**: Finds exact clickable radio/checkbox labels without clicking overlay containers.
+*(Or use native MCP tool `launch_browser(url=course_url)` if MCP is active).*
 
 ---
 
-### Step 3: Fast 3-Attempt Speed Law & Answer Caching
-**CRITICAL EFFICIENCY RULE**: Do not waste time manually re-verifying every detail repeatedly on Attempt 1. LMS platforms provide **3 attempts per assessment window**.
-
-1. **Attempt 1 (Speed Run)**:
-   - Solve theoretical questions with direct reasoning.
-   - For diagrams/graphs, invoke `LocalDiagramParser` and `MulticastSimulator` in `< 200ms` (do not burn time on endless pixel inspection).
-   - Fill answers and submit.
-   - Save attempt state and results to temporary cache:
-     ```python
-     attempt_mgr = FastAttemptManager()
-     attempt_mgr.save_attempt(quiz_id, attempt_num=1, questions=questions, answers=answers, score_pct=score, feedback=feedback)
-     ```
-   - This writes `.assessment_cache/<quiz_id>_attempt_1.md` and `.json`.
-
-2. **Attempt 2 & 3 (Zero-Compute Diff)**:
-   - Read `.assessment_cache/<quiz_id>_attempt_1.md`.
-   - Any question marked `✅ CORRECT` is locked in immediately with **zero compute**.
-   - Focus 100% of reasoning compute ONLY on questions marked `❌ WRONG`.
-
-3. **Isolated Screenshot Storage**:
-   - Enforce: All screenshots must strictly be saved in `.assessment_cache/screenshots/`. Never save scratch images in root or source directories.
-
-4. **Attempt Budget Protector**:
-   - Always verify confidence before clicking submit:
-     ```python
-     allowed, msg = attempt_mgr.verify_attempt_budget(predicted_confidence_pct=85.0)
-     if not allowed:
-         # Re-evaluate uncertain questions before burning attempt
-         pass
-     ```
-
-5. **Auto-Purge Upon Passing**:
-   - When score $\ge 80\%$, invoke `attempt_mgr.purge_cache(quiz_id)` to delete all temporary `.md` and `.json` cache files for a pristine repository.
+### Phase 2: Login Gate & User Check
+Connect to the browser over CDP:
+1. Inspect the active tab:
+   - **If page shows a login screen** (e.g. "Sign In", "Log In", email/password inputs):
+     Output a friendly message to the user:
+     > *"🌐 I launched the browser and opened Coursera for you! Please log in with your credentials. Once you are logged in and on the course page, reply with **'continue'** or **'logged in'**, and I will take over autonomously!"*
+     Stop and wait for the user's confirmation.
+   - **If already logged in** (user profile, dashboard, or course content visible):
+     Proceed immediately to Phase 3 without stopping!
 
 ---
 
-### Step 4: Built-In Algorithmic & Diagram Solvers
+### Phase 3: Autonomous Course Crawl & Quiz Execution
+Once logged in:
+1. **Find Active Assessment Tab**:
+   ```python
+   from playwright.sync_api import sync_playwright
+   from quiz_pilot.lms_adapters import get_lms_adapter
+   from quiz_pilot.attempt_protector import FastAttemptManager
+
+   with sync_playwright() as p:
+       browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+       
+       page = None
+       lms_keywords = ["coursera", "canvas", "moodle", "blackboard", "exam", "quiz", "assessment", "forms"]
+       for ctx in browser.contexts:
+           for p_tab in ctx.pages:
+               try:
+                   if any(k in p_tab.url.lower() or k in p_tab.title().lower() for k in lms_keywords):
+                       page = p_tab
+                       break
+               except Exception:
+                   pass
+           if page:
+               break
+       if not page and browser.contexts and browser.contexts[0].pages:
+           page = browser.contexts[0].pages[0]
+   ```
+
+2. **Auto-Detect Platform & Extract Questions**:
+   ```python
+   adapter = get_lms_adapter(page)
+   questions = adapter.extract_questions()
+   ```
+
+3. **Fast 3-Attempt Heuristic**:
+   - Solve with direct reasoning + local graph/diagram algorithms (`<200ms`).
+   - Fill answers using `adapter.fill_answer(idx, val)` or `solve_batch()`.
+   - Submit via `adapter.submit_assessment()`.
+   - Check grade via `adapter.extract_feedback()`.
+
+4. **Pass & Zero-Artifact Purge**:
+   - When passed ($\ge 80\%$ or green pass banner), run `FastAttemptManager().purge_all()`.
+   - Never leave any `solve_*.py`, JSON dumps, or temporary files on disk.
+
+5. **Advance to Next Quiz**:
+   - Automatically navigate to the next incomplete assignment in the course syllabus until the entire course or specialization is passed!
+
+---
+
+## 🧠 Built-In Algorithmic & Diagram Solvers
 
 For Computer Science, Distributed Systems, and Graph Quizzes:
 
-#### 1. Space-Time & Distributed Execution Diagrams:
+### 1. Space-Time & Distributed Execution Diagrams:
 ```python
 from quiz_pilot.diagram_parser import LocalDiagramParser
 parser = LocalDiagramParser()
@@ -111,40 +107,20 @@ parsed = parser.parse_spacetime_diagram(image_path)
 solution = parser.solve_fast_lamport(parsed)
 ```
 
-#### 2. Vector Clocks & Event Concurrency:
+### 2. Vector Clocks & Event Concurrency:
 ```python
 from quiz_pilot.graph_solvers import LamportVectorClockSolver
 solver = LamportVectorClockSolver(num_processes=4)
-# Add process traces and message edges
 solver.add_message('M1', src=0, dst=1)
 solver.add_process_trace(0, [('send', 'M1')])
 solver.add_process_trace(1, [('recv', 'M1')])
 res = solver.solve()
-is_conc = solver.is_concurrent('e1', 'e2')
 ```
 
-#### 3. Multicast FIFO & Causal Buffering:
+### 3. Multicast FIFO & Causal Buffering:
 ```python
 from quiz_pilot.graph_solvers import MulticastSimulator
 sim = MulticastSimulator(num_processes=4)
 fifo_res = sim.simulate_fifo(num_processes=4, multicasts=mcasts, arrivals=arrs)
 causal_res = sim.simulate_causal(num_processes=4, multicasts=mcasts, arrivals=arrs)
 ```
-
----
-
-### Step 5: Fill Answers & Submit
-```python
-# Batch or single fill
-for idx, val in final_answers.items():
-    adapter.fill_answer(idx, val)
-
-# Submit assessment
-adapter.submit_assessment()
-
-# Extract feedback
-feedback = adapter.extract_feedback()
-print(f"Grade: {feedback['score_pct']}% | Passed: {feedback['passed']}")
-```
-
-If grade $\ge 80\%$, finalize and proceed to next assessment automatically!

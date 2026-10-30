@@ -21,12 +21,32 @@ from quiz_pilot.lms_adapters import get_lms_adapter
 from quiz_pilot.attempt_protector import FastAttemptManager
 from quiz_pilot.graph_solvers import MulticastSimulator, LamportVectorClockSolver
 from quiz_pilot.diagram_parser import LocalDiagramParser
+from quiz_pilot.browser_launcher import launch_browser, is_browser_running
 
 # Initialize helper engines
 attempt_mgr = FastAttemptManager()
 diagram_parser = LocalDiagramParser()
 
 TOOLS = [
+    {
+        "name": "launch_browser",
+        "description": "Launches Chrome, Edge, or Brave on remote debugging port 9222 and opens the course/assessment URL automatically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Assessment or Course URL (default: https://www.coursera.org)",
+                    "default": "https://www.coursera.org"
+                },
+                "port": {
+                    "type": "integer",
+                    "description": "CDP debugging port (default: 9222)",
+                    "default": 9222
+                }
+            }
+        }
+    },
     {
         "name": "extract_questions",
         "description": "Extracts structured questions, options, types, and images from the active LMS/assessment browser page.",
@@ -173,6 +193,12 @@ def find_assessment_page(browser, target_keyword: Optional[str] = None):
 
 
 async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    if name == "launch_browser":
+        target_url = arguments.get("url", "https://www.coursera.org")
+        port = int(arguments.get("port", 9222))
+        ok, msg = launch_browser(url=target_url, port=port)
+        return {"content": [{"type": "text", "text": json.dumps({"success": ok, "message": msg}, indent=2)}]}
+
     cdp_url = arguments.get("cdp_url", "http://127.0.0.1:9222")
 
     if name == "solve_multicast":
