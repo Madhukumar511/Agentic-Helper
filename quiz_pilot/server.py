@@ -1,0 +1,166 @@
+"""
+Local Bridge Server for Quiz-Pilot.
+Maintains live WebSocket connection with browser tabs and provides
+Agent Bridge endpoints for Antigravity to scan and answer questions directly.
+"""
+
+import os
+import json
+import asyncio
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+app = FastAPI(title="Quiz-Pilot Bridge Server", version="1.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+HUD_PATH = Path(__file__).parent / "hud" / "hud.js"
+
+# Global state shared between active browser tab and agent
+active_browser_ws: Optional[WebSocket] = None
+latest_page_state: Dict[str, Any] = {
+    "url": "",
+    "title": "",
+    "questions": [],
+    "is_connected": False
+}
+
+
+class ClickRequest(BaseModel):
+    q: int
+    opt: int
+
+
+class SolvePageRequest(BaseModel):
+    answers: List[ClickRequest]
+    click_next: bool = False
+
+
+@app.get("/")
+def index():
+    return {
+        "status": "online",
+        "service": "Quiz-Pilot Agent Bridge Server",
+        "browser_connected": active_browser_ws is not None,
+        "questions_count": len(latest_page_state.get("questions", [])),
+        "url": latest_page_state.get("url", "")
+    }
+
+
+@app.get("/hud.js")
+def get_hud_script():
+    """Serves injectable HUD script."""
+    if HUD_PATH.exists():
+        return FileResponse(HUD_PATH, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="HUD script not found.")
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """Live bidirectional channel with the browser tab."""
+    global active_browser_ws, latest_page_state
+    await websocket.accept()
+    active_browser_ws = websocket
+    latest_page_state["is_connected"] = True
+    print("\n[Quiz-Pilot Bridge] Browser tab connected via WebSocket!")
+
+    try:
+        while True:
+            data_text = await websocket.receive_text()
+            msg = json.loads(data_text)
+            msg_type = msg.get("type")
+
+            if msg_type == "page_state":
+                latest_page_state["url"] = msg.get("url", "")
+                latest_page_state["title"] = msg.get("title", "")
+                latest_page_state["questions"] = msg.get("questions", [])
+                print(f"[Quiz-Pilot Bridge] Received {len(latest_page_state['questions'])} question(s) from '{latest_page_state['title']}'")
+            elif msg_type == "action_result":
+                print(f"[Quiz-Pilot Bridge] Action result: {msg.get('action')} -> {msg.get('success')}")
+
+    except WebSocketDisconnect:
+        print("[Quiz-Pilot Bridge] Browser tab disconnected.")
+        active_browser_ws = None
+        latest_page_state["is_connected"] = False
+    except Exception as e:
+        print(f"[Quiz-Pilot Bridge] WebSocket error: {e}")
+        active_browser_ws = None
+        latest_page_state["is_connected"] = False
+
+
+# --- Agent Endpoints ---
+
+@app.get("/api/agent/state")
+def get_agent_state():
+    """Agent calls this to get currently visible questions on screen."""
+    return {
+        "connected": active_browser_ws is not None,
+        "url": latest_page_state.get("url", ""),
+        "title": latest_page_state.get("title", ""),
+        "questions": latest_page_state.get("questions", [])
+    }
+
+
+@app.post("/api/agent/click")
+async def agent_click_option(req: ClickRequest):
+    """Agent clicks a specific option."""
+    if not active_browser_ws:
+        raise HTTPException(status_code=503, detail="No browser tab connected via WebSocket.")
+
+    await active_browser_ws.send_text(json.dumps({
+        "type": "click_option",
+        "q": req.q,
+        "opt": req.opt
+    }))
+    return {"status": "sent", "q": req.q, "opt": req.opt}
+
+
+@app.post("/api/agent/solve-page")
+async def agent_solve_page(req: SolvePageRequest):
+    """Agent sends answers for all questions on current page at once."""
+    if not active_browser_ws:
+        raise HTTPException(status_code=503, detail="No browser tab connected via WebSocket.")
+
+    for item in req.answers:
+        await active_browser_ws.send_text(json.dumps({
+            "type": "click_option",
+            "q": item.q,
+            "opt": item.opt
+        }))
+        await asyncio.sleep(0.3)
+
+    if req.click_next:
+        await asyncio.sleep(0.5)
+        await active_browser_ws.send_text(json.dumps({"type": "click_next"}))
+
+    return {"status": "completed", "solved_count": len(req.answers), "next_clicked": req.click_next}
+
+
+@app.post("/api/agent/next")
+async def agent_click_next():
+    """Agent advances to next question or page."""
+    if not active_browser_ws:
+        raise HTTPException(status_code=503, detail="No browser tab connected via WebSocket.")
+
+    await active_browser_ws.send_text(json.dumps({"type": "click_next"}))
+    return {"status": "sent", "action": "click_next"}
+
+
+def start_server(host: str = "127.0.0.1", port: int = 8765):
+    """Launches the Uvicorn web server."""
+    import uvicorn
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+if __name__ == "__main__":
+    start_server()
