@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)
 [![Playwright](https://img.shields.io/badge/Playwright-CDP%20Engine-orange.svg)](https://playwright.dev)
 [![Antigravity IDE](https://img.shields.io/badge/Antigravity-Zero--Touch%20Skill-purple.svg)](GEMINI.md)
-[![Tests Passing](https://img.shields.io/badge/Tests-16%2F16%20Passing-success.svg)](tests/)
+[![Tests Passing](https://img.shields.io/badge/Tests-20%2F20%20Passing-success.svg)](tests/)
 
 ---
 
@@ -17,9 +17,10 @@ Unlike generic vision-based AI browser tools that simulate slow mouse movements 
 
 1. **⚡ Sub-Second Speed**: Injects answers directly into the browser's DOM and React state via Chrome DevTools Protocol (CDP) in **~50 ms per question**.
 2. **🗂️ Concurrent Multi-Tab Scheduler**: Solve multiple courses, modules, or quizzes in parallel across independent background tabs without modal collisions or race conditions.
-3. **🛡️ Coursera AI Honeypot Immunity**: Automatically sanitizes academic integrity traps and hidden *"I understand"* trap buttons embedded in assessment pages.
-4. **🧠 Deterministic Graph & Diagram Solvers**: Built-in computer vision (<200ms OpenCV) and algorithmic solvers for distributed systems (Lamport clocks, Vector Clocks, FIFO/Causal Multicast, Chandy-Lamport Snapshots).
-5. **🧹 Strict Zero-Artifact Law**: Operates 100% in-memory. Never leaves one-off `.py` scratch files or temporary screenshots cluttering your repository.
+3. **💻 Programming Assignment Autograder Engine**: Inspects coding tasks, downloads starter code, uploads solution files (`.zip`, `.py`, `.tar.gz`) to LMS autograders, and parses remote test feedback.
+4. **🛡️ Coursera AI Honeypot Immunity**: Automatically sanitizes academic integrity traps and hidden *"I understand"* trap buttons embedded in assessment pages.
+5. **🧠 Deterministic Graph & Diagram Solvers**: Built-in computer vision (<200ms OpenCV) and algorithmic solvers for distributed systems (Lamport clocks, Vector Clocks, FIFO/Causal Multicast, Chandy-Lamport Snapshots).
+6. **🧹 Strict Zero-Artifact Law**: Operates 100% in-memory. Never leaves one-off `.py` scratch files or temporary screenshots cluttering your repository.
 
 ---
 
@@ -120,6 +121,9 @@ Agentic-Helper includes a native **Model Context Protocol (MCP)** server for **A
 | `get_feedback` | — | Extracts final score percentage and pass/fail badges. |
 | `solve_diagram` | `image_path, question_prompt, options` | Sub-second (<100ms) diagram & network topology solver. Resolves spacetime, Fat-Tree, Clos, and maps directly to options. |
 | `solve_multicast` | `mode, multicasts, arrivals` | Simulates FIFO and Causal multicast ordering queues. |
+| `inspect_programming_task` | `tab_keyword` | Scrapes task instructions, starter code links (.zip, .py), and upload dropzones. |
+| `submit_code_file` | `file_path, tab_keyword` | Attaches solution file (.zip, .py) to LMS dropzone, signs honor code, and submits. |
+| `poll_autograder_results` | `timeout_sec, tab_keyword` | Polls remote autograder until graded, returning score and error logs. |
 
 ### Configuration:
 * **Antigravity IDE**: Included out-of-the-box via workspace `.gemini/settings.json`.
@@ -186,7 +190,7 @@ causal = sim.simulate_causal(
 
 ## 🧪 Testing
 
-All 16 unit tests pass in under 1 second:
+All 20 unit tests pass in under 1 second:
 ```bash
 pytest
 # OR

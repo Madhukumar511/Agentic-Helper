@@ -23,10 +23,12 @@ from quiz_pilot.graph_solvers import MulticastSimulator, LamportVectorClockSolve
 from quiz_pilot.diagram_parser import LocalDiagramParser
 from quiz_pilot.browser_launcher import launch_browser, is_browser_running
 from quiz_pilot.tab_scheduler import AsyncTabScheduler
+from quiz_pilot.programming_solver import ProgrammingAssignmentManager
 
 # Initialize helper engines
 attempt_mgr = FastAttemptManager()
 diagram_parser = LocalDiagramParser()
+prog_manager = ProgrammingAssignmentManager()
 
 TOOLS = [
     {
@@ -203,6 +205,70 @@ TOOLS = [
                 }
             }
         }
+    },
+    {
+        "name": "inspect_programming_task",
+        "description": "Scrapes programming assignment instructions, starter code archive links (.zip, .py), upload inputs, and grading status.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab_keyword": {
+                    "type": "string",
+                    "description": "Optional keyword in URL or Title to pick a specific tab (e.g. 'programming', 'mp1')"
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            }
+        }
+    },
+    {
+        "name": "submit_code_file",
+        "description": "Attaches a local solution file or archive (.zip, .tar.gz, .py) to the LMS file upload dropzone, ticks honor code, and submits.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute or relative path to the local solution file or .zip"
+                },
+                "tab_keyword": {
+                    "type": "string",
+                    "description": "Optional tab title/URL keyword"
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "poll_autograder_results",
+        "description": "Polls the LMS autograder results view until grading completes. Extracts score percentage, pass/fail state, and test case error logs.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "timeout_sec": {
+                    "type": "integer",
+                    "description": "Maximum seconds to wait for autograder completion (default: 120)",
+                    "default": 120
+                },
+                "tab_keyword": {
+                    "type": "string",
+                    "description": "Optional tab keyword"
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            }
+        }
     }
 ]
 
@@ -296,6 +362,26 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=concurrency)
         batch_results = await scheduler.run_parallel_batch(auto_submit=auto_sub)
         return {"content": [{"type": "text", "text": json.dumps(batch_results, indent=2)}]}
+
+    if name == "inspect_programming_task":
+        tab_kw = arguments.get("tab_keyword")
+        pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
+        res = await pm.extract_task_spec(tab_keyword=tab_kw)
+        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+
+    if name == "submit_code_file":
+        f_path = arguments["file_path"]
+        tab_kw = arguments.get("tab_keyword")
+        pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
+        res = await pm.upload_and_submit(file_path=f_path, tab_keyword=tab_kw)
+        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+
+    if name == "poll_autograder_results":
+        t_sec = int(arguments.get("timeout_sec", 120))
+        tab_kw = arguments.get("tab_keyword")
+        pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
+        res = await pm.poll_autograder_results(tab_keyword=tab_kw, timeout_sec=t_sec)
+        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
 
     # Browser tools via CDP
     async with async_playwright() as p:

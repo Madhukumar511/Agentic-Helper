@@ -16,6 +16,12 @@ from .diagram_parser import LocalDiagramParser
 from .attempt_protector import FastAttemptManager
 from .lms_adapters import get_lms_adapter
 from .tab_scheduler import AsyncTabScheduler, solve_all_open_quizzes_sync
+from .programming_solver import (
+    ProgrammingAssignmentManager,
+    inspect_programming_task_sync,
+    submit_code_file_sync,
+    poll_autograder_results_sync
+)
 
 __all__ = [
     "DETECTION_SCRIPT",
@@ -32,5 +38,9 @@ __all__ = [
     "FastAttemptManager",
     "get_lms_adapter",
     "AsyncTabScheduler",
-    "solve_all_open_quizzes_sync"
+    "solve_all_open_quizzes_sync",
+    "ProgrammingAssignmentManager",
+    "inspect_programming_task_sync",
+    "submit_code_file_sync",
+    "poll_autograder_results_sync"
 ]

@@ -297,6 +297,48 @@ def cmd_solve_all(args):
         console.print(f"[{status_color}]Tab {r.get('tab_index')}: {r.get('title')} -> Score: {r.get('score_pct')}% ({r.get('status')})[/{status_color}]")
 
 
+def cmd_inspect_task(args):
+    """Scrapes active programming task specs, instructions, and starter code links."""
+    from quiz_pilot.programming_solver import inspect_programming_task_sync
+    res = inspect_programming_task_sync(cdp_url=f"http://127.0.0.1:{args.port}", tab_keyword=args.tab)
+    if getattr(args, "json", False):
+        console.print(json.dumps(res, indent=2))
+    else:
+        console.print(f"[bold green]Task:[/] {res.get('title')}")
+        console.print(f"[bold cyan]Type:[/] {res.get('task_type')} | Has File Input: {res.get('has_file_input')}")
+        starter_files = res.get('starter_files', [])
+        if starter_files:
+            console.print("[bold yellow]Starter Code Links:[/]")
+            for f in starter_files:
+                console.print(f" - {f.get('name')}: [dim]{f.get('url')}[/dim]")
+        if res.get('latest_score') is not None:
+            console.print(f"[bold magenta]Latest Score:[/] {res.get('latest_score')}%")
+
+
+def cmd_submit_code(args):
+    """Uploads solution code or archive to LMS autograder."""
+    from quiz_pilot.programming_solver import submit_code_file_sync, poll_autograder_results_sync
+    res = submit_code_file_sync(file_path=args.file, cdp_url=f"http://127.0.0.1:{args.port}", tab_keyword=args.tab)
+    if not res.get("success"):
+        console.print(f"[bold red]Submission Failed:[/] {res.get('error')}")
+        return
+    console.print(f"[bold green]✓ Solution attached & submitted:[/] {res.get('file_name')} ({res.get('file_size_bytes')} bytes)")
+    if getattr(args, "wait", False):
+        console.print("[bold cyan]Waiting for remote autograder results...[/bold cyan]")
+        grade_res = poll_autograder_results_sync(cdp_url=f"http://127.0.0.1:{args.port}", tab_keyword=args.tab, timeout_sec=args.timeout)
+        console.print(f"[bold green]Autograder Status:[/] {grade_res.get('status')} | Score: {grade_res.get('score_pct')}%")
+
+
+def cmd_poll_grader(args):
+    """Polls remote autograder output."""
+    from quiz_pilot.programming_solver import poll_autograder_results_sync
+    res = poll_autograder_results_sync(cdp_url=f"http://127.0.0.1:{args.port}", tab_keyword=args.tab, timeout_sec=args.timeout)
+    console.print(f"[bold green]Autograder Status:[/] {res.get('status')} | Score: {res.get('score_pct')}%")
+    if res.get("grader_output"):
+        console.print("[bold white]Grader Output:[/bold white]")
+        console.print(res.get("grader_output"))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="quiz-pilot",
@@ -376,6 +418,29 @@ def main():
     p_sall.add_argument("--concurrency", type=int, default=4, help="Max parallel workers")
     p_sall.add_argument("--port", type=int, default=9222)
     p_sall.set_defaults(func=cmd_solve_all)
+
+    # inspect-task
+    p_itask = subparsers.add_parser("inspect-task", help="Inspect programming assignment instructions, links, and inputs")
+    p_itask.add_argument("--tab", type=str, default=None, help="Tab keyword")
+    p_itask.add_argument("--json", action="store_true", help="Output raw JSON")
+    p_itask.add_argument("--port", type=int, default=9222)
+    p_itask.set_defaults(func=cmd_inspect_task)
+
+    # submit-code
+    p_scode = subparsers.add_parser("submit-code", help="Upload and submit solution archive to LMS autograder")
+    p_scode.add_argument("file", type=str, help="Path to code file or .zip archive")
+    p_scode.add_argument("--tab", type=str, default=None, help="Tab keyword")
+    p_scode.add_argument("--wait", action="store_true", help="Wait for remote autograder feedback")
+    p_scode.add_argument("--timeout", type=int, default=120, help="Autograder wait timeout in seconds")
+    p_scode.add_argument("--port", type=int, default=9222)
+    p_scode.set_defaults(func=cmd_submit_code)
+
+    # poll-grader
+    p_pgrade = subparsers.add_parser("poll-grader", help="Poll autograder test results and score")
+    p_pgrade.add_argument("--tab", type=str, default=None, help="Tab keyword")
+    p_pgrade.add_argument("--timeout", type=int, default=120, help="Timeout in seconds")
+    p_pgrade.add_argument("--port", type=int, default=9222)
+    p_pgrade.set_defaults(func=cmd_poll_grader)
 
     args = parser.parse_args()
     args.func(args)
