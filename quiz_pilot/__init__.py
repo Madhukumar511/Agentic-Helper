@@ -1,5 +1,33 @@
 """
-Quiz-Pilot: High-Speed AI Auto-Pilot for LMS Quiz Questions.
+Quiz Pilot / Agentic Helper Package.
 """
 
-__version__ = "1.0.0"
+from .dom_detector import (
+    DETECTION_SCRIPT,
+    SELECT_OPTION_SCRIPT,
+    NAVIGATE_NEXT_SCRIPT,
+    IS_SUBMIT_SCREEN_SCRIPT
+)
+from .cdp_client import CDPQuizClient
+from .automation_engine import AutomationEngine
+from .ai_solver import AISolver
+from .graph_solvers import ChandyLamportSolver, MulticastSimulator, LamportVectorClockSolver
+from .diagram_parser import LocalDiagramParser
+from .attempt_protector import FastAttemptManager
+from .lms_adapters import get_lms_adapter
+
+__all__ = [
+    "DETECTION_SCRIPT",
+    "SELECT_OPTION_SCRIPT",
+    "NAVIGATE_NEXT_SCRIPT",
+    "IS_SUBMIT_SCREEN_SCRIPT",
+    "CDPQuizClient",
+    "AutomationEngine",
+    "AISolver",
+    "ChandyLamportSolver",
+    "MulticastSimulator",
+    "LamportVectorClockSolver",
+    "LocalDiagramParser",
+    "FastAttemptManager",
+    "get_lms_adapter"
+]
