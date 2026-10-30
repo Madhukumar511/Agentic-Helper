@@ -50,8 +50,15 @@ with sync_playwright() as p:
 
 ---
 
-## ⚡ The 3-Attempt Speed Law (CRITICAL AGENT DIRECTIVE)
+## ⚡ The 3-Attempt Speed Law & Zero-Artifact Directive (CRITICAL AGENT RULES)
 
+### Rule 1: ZERO Scratch File Creation (No Course-Specific Scripts)
+* **DO NOT** create one-off Python scripts (such as `solve_c2_hw1.py`, `inspect_submit.py`, `check_grade.py`) in the repository or workspace!
+* The entire engine is already built into `quiz_pilot` and the MCP server.
+* Execute all operations **in-memory** directly via Playwright, `CourseraAdapter`, or native MCP tool calls (`extract_questions()`, `fill_answer()`, `submit_assessment()`).
+* Keep the repository completely pristine and free of one-off course files.
+
+### Rule 2: Fast 3-Attempt Speed Law
 When solving quizzes for users, **DO NOT get stuck in endless verification loops on Attempt 1**.
 
 1. **Attempt 1 (Speed Run)**:
@@ -65,14 +72,16 @@ When solving quizzes for users, **DO NOT get stuck in endless verification loops
    - Any question marked `✅ CORRECT` is **permanently locked in with ZERO compute**.
    - Focus 100% of your reasoning compute strictly on questions marked `❌ WRONG`.
 
-3. **Isolated Screenshot Law**:
-   - Save all captured screenshots in `.assessment_cache/screenshots/`. Never save images in repository root or source folders.
+### Rule 3: Isolated Screenshot & Mandatory Cleanup Law
+* **Strict Screenshot Storage**: Save all captured screenshots in `.assessment_cache/screenshots/`. Never save images in repository root, source folders, or Desktop.
+* **Mandatory Post-Course Cleanup**: As soon as a quiz or course is completed and passed ($\ge 80\%$), the agent **MUST** immediately purge all temporary files and screenshots:
+  ```python
+  from quiz_pilot.attempt_protector import FastAttemptManager
+  FastAttemptManager().purge_all()
+  ```
+  *(Or execute shell command: `agentic-helper clean`)*
+* Leaving behind any scratch scripts, dumped JSONs, or screenshots is strictly prohibited.
 
-4. **Attempt Budget Protector**:
-   - If predicted confidence is $< 80\%$, do not submit. Refine uncertain questions first.
-
-5. **Auto-Purge**:
-   - Once score $\ge 80\%$ is achieved, purge temporary `.md` and `.json` cache files for a pristine repository.
 
 ---
 

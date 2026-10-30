@@ -150,6 +150,14 @@ class FastAttemptManager:
                     except OSError:
                         pass
         else:
-            # Full wipe
+            self.purge_all()
+
+    def purge_all(self):
+        """
+        Full Zero-Artifact cleanup: Wipes all temporary attempt files, JSON, Markdown,
+        and all screenshots from .assessment_cache to ensure the project remains completely pristine.
+        """
+        if os.path.exists(self.base_cache_dir):
             shutil.rmtree(self.base_cache_dir, ignore_errors=True)
-            os.makedirs(self.screenshot_dir, exist_ok=True)
+        os.makedirs(self.screenshot_dir, exist_ok=True)
+

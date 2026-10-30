@@ -8,8 +8,11 @@ This document defines how **Google Antigravity IDE** and **Gemini Coding Agents*
 
 When the user types `/agentic-helper`, `/Agentic-helper`, or asks you to *"solve quiz"* / *"complete assessment"*:
 1. **Activate the `agentic-helper` skill**.
-2. **Connect to the user's running browser on port 9222**.
-3. **Autonomously extract, solve, and submit the quiz**.
+2. **Operate entirely in-memory**: Never write one-off course scripts (e.g., `solve_hw.py`) to disk! Use `CourseraAdapter` or native MCP tools directly.
+3. **Connect to the user's running browser on port 9222**.
+4. **Autonomously extract, solve, and submit the quiz**.
+5. **Mandatory Post-Quiz Purge**: When passed ($\ge 80\%$), automatically run `FastAttemptManager().purge_all()` or `agentic-helper clean` to wipe all temporary caches and screenshots.
+
 
 ---
 

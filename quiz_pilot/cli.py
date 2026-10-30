@@ -278,6 +278,14 @@ def cmd_screenshot(args):
         client.close()
 
 
+def cmd_clean(args):
+    """Purges all temporary assessment cache, logs, and screenshots."""
+    from quiz_pilot.attempt_protector import FastAttemptManager
+    attempt_mgr = FastAttemptManager()
+    attempt_mgr.purge_all()
+    console.print("[bold green]✓ Zero-Artifact Cleanup Complete: All temporary cache and screenshots wiped![/bold green]")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="quiz-pilot",
@@ -347,6 +355,10 @@ def main():
     p_snip = subparsers.add_parser("hud-snippet", help="Print JavaScript snippet for Brave console")
     p_snip.add_argument("--port", type=int, default=8765)
     p_snip.set_defaults(func=cmd_hud_snippet)
+
+    # clean
+    p_clean = subparsers.add_parser("clean", help="Purge all temporary assessment cache, logs, and screenshots")
+    p_clean.set_defaults(func=cmd_clean)
 
     args = parser.parse_args()
     args.func(args)
