@@ -372,7 +372,7 @@ def main():
     p_clean.set_defaults(func=cmd_clean)
 
     # solve-all
-    p_sall = subparsers.add_parser("solve-all", help="Concurrently solve all open assessment tabs")
+    p_sall = subparsers.add_parser("solve-all", aliases=["multiworker"], help="Concurrently solve all open assessment tabs")
     p_sall.add_argument("--concurrency", type=int, default=4, help="Max parallel workers")
     p_sall.add_argument("--port", type=int, default=9222)
     p_sall.set_defaults(func=cmd_solve_all)

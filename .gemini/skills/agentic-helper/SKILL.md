@@ -1,6 +1,6 @@
 ---
 name: agentic-helper
-description: Universal LMS and Web Assessment Automation Engine. Automatically bootstraps dependencies, launches browser with remote debugging port 9222, connects to Coursera/Canvas, waits for login if needed, extracts questions, solves domain/graph/theory problems, and submits quizzes across Coursera, Canvas, Moodle, Blackboard, Google Forms, and custom web assessments. Use whenever the user types /agentic-helper, /Agentic-helper, "solve quiz", "complete assessment", "do coursera quiz", "automate exam", or asks the agent to autonomously complete an online assessment.
+description: Universal LMS and Web Assessment Automation Engine. Automatically bootstraps dependencies, launches browser with remote debugging port 9222, connects to Coursera/Canvas, waits for login if needed, extracts questions, solves domain/graph/theory problems, and submits quizzes across Coursera, Canvas, Moodle, Blackboard, Google Forms, and custom web assessments. Supports multi-tab parallel workers. Use whenever the user types /agentic-helper, /agentic-helper multiworker, "solve quiz", "complete assessment", "do coursera quiz", "automate exam", or asks the agent to autonomously complete an online assessment.
 ---
 
 # Agentic-Helper: Autonomous LMS Assessment Engine
@@ -100,8 +100,14 @@ Once logged in:
 
 ---
 
-### Phase 3B: Multi-Tab Concurrent Execution (Solve All Open Quizzes Simultaneously)
-If the user has multiple courses or quizzes open in separate tabs (or asks to "solve all tabs"):
+### Phase 3B: Multi-Tab Concurrent Execution (`/agentic-helper multiworker`)
+When the user types `/agentic-helper multiworker` or has multiple courses/quizzes open in tabs:
+```bash
+# Direct CLI invocation with bounded workers (default concurrency: 4)
+agentic-helper multiworker --concurrency 4
+# or: agentic-helper solve-all --concurrency 4
+```
+In Python / Native MCP:
 ```python
 from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync
 

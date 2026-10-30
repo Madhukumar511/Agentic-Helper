@@ -84,6 +84,8 @@ flowchart TD
 ### Run Multi-Tab Solving via CLI:
 ```bash
 # Solve all open assessment tabs simultaneously (up to 4 in parallel)
+agentic-helper multiworker --concurrency 4
+# or:
 agentic-helper solve-all --concurrency 4
 ```
 
