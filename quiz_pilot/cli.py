@@ -4,6 +4,7 @@ Unified CLI Entry Point for Quiz-Pilot with Agent-Driven Bridge.
 
 import sys
 import os
+import shutil
 import json
 import argparse
 import subprocess
