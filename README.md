@@ -3,6 +3,17 @@
 > **Universal LMS & Web Assessment Automation Engine for Autonomous AI Agents**  
 > Connect any AI coding agent (Claude Code, Cursor, Antigravity, OpenAI Codex, custom LLM agents) to your live browser session to reliably inspect, reason, and solve quizzes across Coursera, Canvas, Moodle, Blackboard, Google Forms, and custom web assessments.
 
+[![Agent Guide](https://img.shields.io/badge/Guide-AGENTS.md-blue.svg)](AGENTS.md)
+[![Antigravity IDE](https://img.shields.io/badge/Antigravity-GEMINI.md-purple.svg)](GEMINI.md)
+[![Windows Setup](https://img.shields.io/badge/Windows-WINDOWS__GUIDE.md-teal.svg)](WINDOWS_GUIDE.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+### 📚 Dedicated Documentation
+* **[AGENTS.md](AGENTS.md)** — Universal instructions for autonomous AI agents (Antigravity, Cursor, Claude Code, Windsurf).
+* **[GEMINI.md](GEMINI.md)** — Google Antigravity IDE configuration & `/agentic-helper` slash command usage.
+* **[WINDOWS_GUIDE.md](WINDOWS_GUIDE.md)** — Windows 10/11 setup guide, PowerShell commands, and one-click browser launcher.
+
+
 ---
 
 ## 🌟 Key Features

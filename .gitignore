@@ -44,6 +44,18 @@ browser_profile/
 *.log
 HW*_ANSWERS.md
 FINAL_EXAM_ANSWERS.md
+.assessment_cache/
+*.html
+solve_*.py
+inspect_*.py
+extract_*.py
+dump_*.py
+check_*.py
+run_*.py
+submit_*.py
+list_courses.py
+test_numeric_fill.py
+execute_final_exam.py
 
 # IDEs
 .idea/
