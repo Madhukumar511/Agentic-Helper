@@ -279,11 +279,17 @@ def cmd_screenshot(args):
 
 
 def cmd_clean(args):
-    """Purges all temporary assessment cache, logs, and screenshots."""
+    """Purges all temporary assessment cache, logs, submissions, and screenshots."""
     from quiz_pilot.attempt_protector import FastAttemptManager
     attempt_mgr = FastAttemptManager()
     attempt_mgr.purge_all()
-    console.print("[bold green]✓ Zero-Artifact Cleanup Complete: All temporary cache and screenshots wiped![/bold green]")
+
+    # Also wipe temporary solution submissions directory
+    sub_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "submissions")
+    if os.path.exists(sub_dir):
+        shutil.rmtree(sub_dir, ignore_errors=True)
+
+    console.print("[bold green]✓ Zero-Artifact Cleanup Complete: All temporary cache, submissions, and screenshots wiped![/bold green]")
 
 
 def cmd_solve_all(args):
