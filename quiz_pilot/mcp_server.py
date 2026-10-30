@@ -25,6 +25,9 @@ from quiz_pilot.browser_launcher import launch_browser, is_browser_running
 from quiz_pilot.tab_scheduler import AsyncTabScheduler
 from quiz_pilot.programming_solver import ProgrammingAssignmentManager
 from quiz_pilot.peer_review_solver import PeerReviewManager
+from quiz_pilot.syllabus_crawler import SyllabusCrawler
+from quiz_pilot.direct_api_solver import CourseraDirectAPI
+from quiz_pilot.course_orchestrator import CourseOrchestrator
 
 # Initialize helper engines
 attempt_mgr = FastAttemptManager()
@@ -342,6 +345,54 @@ TOOLS = [
                 }
             }
         }
+    },
+    {
+        "name": "crawl_syllabus",
+        "description": "Crawls course syllabus table and extracts complete status of all quizzes, programming tasks, and peer reviews, returning an execution plan.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "course_url": {
+                    "type": "string",
+                    "description": "Course URL or course slug (e.g. 'cloud-networking' or full Coursera URL)"
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            },
+            "required": ["course_url"]
+        }
+    },
+    {
+        "name": "auto_complete_entire_course",
+        "description": "End-to-end autonomous course solver: discovers syllabus, solves quizzes via Direct API/DOM, submits peer reviews, and runs parallel workers without human interruption.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "course_url": {
+                    "type": "string",
+                    "description": "Course URL or slug to complete"
+                },
+                "max_concurrency": {
+                    "type": "integer",
+                    "description": "Maximum parallel tab workers (default: 4)",
+                    "default": 4
+                },
+                "prefer_direct_api": {
+                    "type": "boolean",
+                    "description": "Whether to use sub-second Direct REST API submissions where supported",
+                    "default": True
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            },
+            "required": ["course_url"]
+        }
     }
 ]
 
@@ -509,6 +560,26 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
                 adapter = get_lms_adapter(page)
                 questions = adapter.extract_questions()
                 return {"content": [{"type": "text", "text": json.dumps({"type": "quiz", "questions_count": len(questions), "sample": questions[:2]}, indent=2)}]}
+
+    if name == "crawl_syllabus":
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(cdp_url)
+            page = find_assessment_page(browser)
+            if not page:
+                return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
+            crawler = SyllabusCrawler(page=page)
+            res = crawler.crawl_course_assignments(arguments["course_url"])
+            return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+
+    if name == "auto_complete_entire_course":
+        concurrency = int(arguments.get("max_concurrency", 4))
+        pref_direct = arguments.get("prefer_direct_api", True)
+        orchestrator = CourseOrchestrator(cdp_url=cdp_url, max_concurrency=concurrency)
+        res = await orchestrator.auto_complete_course(
+            course_url=arguments["course_url"],
+            prefer_direct_api=pref_direct
+        )
+        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
 
     # Browser tools via CDP
     async with async_playwright() as p:

@@ -23,6 +23,9 @@ from .programming_solver import (
     poll_autograder_results_sync
 )
 from .peer_review_solver import PeerReviewManager
+from .syllabus_crawler import SyllabusCrawler
+from .direct_api_solver import CourseraDirectAPI
+from .course_orchestrator import CourseOrchestrator
 
 __all__ = [
     "DETECTION_SCRIPT",
@@ -44,5 +47,8 @@ __all__ = [
     "inspect_programming_task_sync",
     "submit_code_file_sync",
     "poll_autograder_results_sync",
-    "PeerReviewManager"
+    "PeerReviewManager",
+    "SyllabusCrawler",
+    "CourseraDirectAPI",
+    "CourseOrchestrator"
 ]

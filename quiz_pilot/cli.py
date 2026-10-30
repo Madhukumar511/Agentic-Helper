@@ -378,6 +378,36 @@ def cmd_complete_reviews(args):
         console.print(f"[bold green]✓ Peer Reviews Finished:[/] Submitted: {res.get('reviews_submitted')}, Remaining: {res.get('reviews_remaining')}")
 
 
+def cmd_crawl_syllabus(args):
+    """Crawls course syllabus table and prints status."""
+    from playwright.sync_api import sync_playwright
+    from quiz_pilot.syllabus_crawler import SyllabusCrawler
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
+        from quiz_pilot.mcp_server import find_assessment_page
+        page = find_assessment_page(browser)
+        if not page:
+            console.print("[bold red]No browser page found.[/bold red]")
+            return
+        crawler = SyllabusCrawler(page=page)
+        res = crawler.crawl_course_assignments(args.course)
+        console.print(f"[bold green]Course:[/] {res.get('course_slug')}")
+        console.print(f"Total: {res.get('total_items')} | Completed: {res.get('completed_count')} | Pending: {res.get('pending_count')}")
+        for it in res.get("execution_plan", []):
+            console.print(f" - [{it.get('type')}] [bold white]{it.get('title')}[/] ({it.get('status')})")
+
+
+def cmd_auto_course(args):
+    """End-to-end autonomous course execution."""
+    import asyncio
+    from quiz_pilot.course_orchestrator import CourseOrchestrator
+    orchestrator = CourseOrchestrator(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
+    console.print(f"[bold cyan]🚀 Starting Zero-Touch Course Auto-Pilot for: {args.course}...[/bold cyan]")
+    res = asyncio.run(orchestrator.auto_complete_course(course_url=args.course, prefer_direct_api=not args.no_api))
+    console.print(f"[bold green]✓ Course Run Completed:[/] Processed {res.get('total_processed', 0)} items.")
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -497,6 +527,20 @@ def main():
     p_crev.add_argument("--tab", type=str, default=None, help="Tab keyword")
     p_crev.add_argument("--port", type=int, default=9222)
     p_crev.set_defaults(func=cmd_complete_reviews)
+
+    # crawl-syllabus
+    p_csyl = subparsers.add_parser("crawl-syllabus", help="Crawl course assignments table and extract pending task queue")
+    p_csyl.add_argument("course", type=str, help="Course slug or URL")
+    p_csyl.add_argument("--port", type=int, default=9222)
+    p_csyl.set_defaults(func=cmd_crawl_syllabus)
+
+    # auto-course
+    p_acourse = subparsers.add_parser("auto-course", help="Autonomously crawl, solve, and submit an entire course")
+    p_acourse.add_argument("course", type=str, help="Course slug or URL")
+    p_acourse.add_argument("--concurrency", type=int, default=4, help="Max parallel workers")
+    p_acourse.add_argument("--no-api", action="store_true", help="Disable direct REST API and use DOM only")
+    p_acourse.add_argument("--port", type=int, default=9222)
+    p_acourse.set_defaults(func=cmd_auto_course)
 
     args = parser.parse_args()
     args.func(args)
