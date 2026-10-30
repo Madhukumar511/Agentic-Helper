@@ -339,6 +339,39 @@ def cmd_poll_grader(args):
         console.print(res.get("grader_output"))
 
 
+def cmd_submit_peer(args):
+    """Submits peer report PDF and optional video URL."""
+    from playwright.sync_api import sync_playwright
+    from quiz_pilot.peer_review_solver import PeerReviewManager
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
+        from quiz_pilot.mcp_server import find_assessment_page
+        page = find_assessment_page(browser, args.tab)
+        if not page:
+            console.print("[bold red]No assessment page found.[/bold red]")
+            return
+        prm = PeerReviewManager(page)
+        res = prm.submit_peer_assignment(title=args.title, report_pdf_path=args.pdf, video_url=args.video or "")
+        console.print(f"[bold green]✓ Peer Report Submitted:[/] {res.get('title')}")
+
+
+def cmd_complete_reviews(args):
+    """Completes required peer reviews."""
+    from playwright.sync_api import sync_playwright
+    from quiz_pilot.peer_review_solver import PeerReviewManager
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
+        from quiz_pilot.mcp_server import find_assessment_page
+        page = find_assessment_page(browser, args.tab)
+        if not page:
+            console.print("[bold red]No assessment page found.[/bold red]")
+            return
+        prm = PeerReviewManager(page)
+        res = prm.complete_peer_reviews(count=args.count)
+        console.print(f"[bold green]✓ Peer Reviews Finished:[/] Submitted: {res.get('reviews_submitted')}, Remaining: {res.get('reviews_remaining')}")
+
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="quiz-pilot",
@@ -441,6 +474,22 @@ def main():
     p_pgrade.add_argument("--timeout", type=int, default=120, help="Timeout in seconds")
     p_pgrade.add_argument("--port", type=int, default=9222)
     p_pgrade.set_defaults(func=cmd_poll_grader)
+
+    # submit-peer
+    p_speer = subparsers.add_parser("submit-peer", help="Upload and submit peer assignment report PDF and video link")
+    p_speer.add_argument("--title", type=str, required=True, help="Project title")
+    p_speer.add_argument("--pdf", type=str, required=True, help="Path to PDF report file")
+    p_speer.add_argument("--video", type=str, default=None, help="Video demonstration URL")
+    p_speer.add_argument("--tab", type=str, default=None, help="Tab keyword")
+    p_speer.add_argument("--port", type=int, default=9222)
+    p_speer.set_defaults(func=cmd_submit_peer)
+
+    # complete-reviews
+    p_crev = subparsers.add_parser("complete-reviews", help="Complete required peer reviews across rubric categories")
+    p_crev.add_argument("--count", type=int, default=4, help="Number of reviews to complete")
+    p_crev.add_argument("--tab", type=str, default=None, help="Tab keyword")
+    p_crev.add_argument("--port", type=int, default=9222)
+    p_crev.set_defaults(func=cmd_complete_reviews)
 
     args = parser.parse_args()
     args.func(args)

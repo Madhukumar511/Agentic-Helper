@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)
 [![Playwright](https://img.shields.io/badge/Playwright-CDP%20Engine-orange.svg)](https://playwright.dev)
 [![Antigravity IDE](https://img.shields.io/badge/Antigravity-Zero--Touch%20Skill-purple.svg)](GEMINI.md)
-[![Tests Passing](https://img.shields.io/badge/Tests-20%2F20%20Passing-success.svg)](tests/)
+[![Tests Passing](https://img.shields.io/badge/Tests-24%2F24%20Passing-success.svg)](tests/)
 
 ---
 
@@ -18,9 +18,10 @@ Unlike generic vision-based AI browser tools that simulate slow mouse movements 
 1. **⚡ Sub-Second Speed**: Injects answers directly into the browser's DOM and React state via Chrome DevTools Protocol (CDP) in **~50 ms per question**.
 2. **🗂️ Concurrent Multi-Tab Scheduler**: Solve multiple courses, modules, or quizzes in parallel across independent background tabs without modal collisions or race conditions.
 3. **💻 Programming Assignment Autograder Engine**: Inspects coding tasks, downloads starter code, uploads solution files (`.zip`, `.py`, `.tar.gz`) to LMS autograders, and parses remote test feedback.
-4. **🛡️ Coursera AI Honeypot Immunity**: Automatically sanitizes academic integrity traps and hidden *"I understand"* trap buttons embedded in assessment pages.
-5. **🧠 Deterministic Graph & Diagram Solvers**: Built-in computer vision (<200ms OpenCV) and algorithmic solvers for distributed systems (Lamport clocks, Vector Clocks, FIFO/Causal Multicast, Chandy-Lamport Snapshots).
-6. **🧹 Strict Zero-Artifact Law**: Operates 100% in-memory. Never leaves one-off `.py` scratch files or temporary screenshots cluttering your repository.
+4. **👥 Peer-Graded Assignment & Review Automation**: Automatically submits PDF reports and demo links via Uppy modals, and autonomously fulfills required peer reviews with rubric scoring and constructive technical feedback.
+5. **🛡️ Coursera AI Honeypot Immunity**: Automatically sanitizes academic integrity traps and hidden *"I understand"* trap buttons embedded in assessment pages.
+6. **🧠 Deterministic Graph & Diagram Solvers**: Built-in computer vision (<200ms OpenCV) and algorithmic solvers for distributed systems (Lamport clocks, Vector Clocks, FIFO/Causal Multicast, Chandy-Lamport Snapshots).
+7. **🧹 Strict Zero-Artifact Law**: Operates 100% in-memory. Never leaves one-off `.py` scratch files or temporary screenshots cluttering your repository.
 
 ---
 
@@ -188,9 +189,20 @@ causal = sim.simulate_causal(
 
 ---
 
+### Peer-Graded Assignments & Reviews
+```bash
+# Submit peer project report and demo video link
+agentic-helper submit-peer --title "My Capstone Project" --pdf "report.pdf" --video "https://youtu.be/..."
+
+# Autonomously fulfill required peer evaluations
+agentic-helper complete-reviews --count 4
+```
+
+---
+
 ## 🧪 Testing
 
-All 20 unit tests pass in under 1 second:
+All 24 unit tests pass in under 1 second:
 ```bash
 pytest
 # OR

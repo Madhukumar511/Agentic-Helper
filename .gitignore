@@ -32,6 +32,7 @@ browser_profile/
 *.cookies
 
 # Temporary inspection and answer dumps
+submissions/
 *.png
 *.jpg
 *.jpeg

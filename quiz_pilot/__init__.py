@@ -22,6 +22,7 @@ from .programming_solver import (
     submit_code_file_sync,
     poll_autograder_results_sync
 )
+from .peer_review_solver import PeerReviewManager
 
 __all__ = [
     "DETECTION_SCRIPT",
@@ -42,5 +43,6 @@ __all__ = [
     "ProgrammingAssignmentManager",
     "inspect_programming_task_sync",
     "submit_code_file_sync",
-    "poll_autograder_results_sync"
+    "poll_autograder_results_sync",
+    "PeerReviewManager"
 ]

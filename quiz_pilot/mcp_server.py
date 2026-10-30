@@ -24,6 +24,7 @@ from quiz_pilot.diagram_parser import LocalDiagramParser
 from quiz_pilot.browser_launcher import launch_browser, is_browser_running
 from quiz_pilot.tab_scheduler import AsyncTabScheduler
 from quiz_pilot.programming_solver import ProgrammingAssignmentManager
+from quiz_pilot.peer_review_solver import PeerReviewManager
 
 # Initialize helper engines
 attempt_mgr = FastAttemptManager()
@@ -269,6 +270,78 @@ TOOLS = [
                 }
             }
         }
+    },
+    {
+        "name": "submit_peer_assignment",
+        "description": "Uploads and submits a peer-graded assignment report (PDF) and optional video URL on Coursera.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Project title"
+                },
+                "report_pdf_path": {
+                    "type": "string",
+                    "description": "Path to local PDF report file"
+                },
+                "video_url": {
+                    "type": "string",
+                    "description": "Optional video demonstration link (YouTube, Vimeo, etc.)"
+                },
+                "tab_keyword": {
+                    "type": "string",
+                    "description": "Optional tab keyword"
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            },
+            "required": ["title", "report_pdf_path"]
+        }
+    },
+    {
+        "name": "complete_peer_reviews",
+        "description": "Fulfills required peer evaluations by selecting highest rubric ratings and providing constructive feedback until quota is completed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "description": "Number of peer reviews to complete (default: 4)",
+                    "default": 4
+                },
+                "tab_keyword": {
+                    "type": "string",
+                    "description": "Optional tab keyword"
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            }
+        }
+    },
+    {
+        "name": "auto_solve_current_assignment",
+        "description": "Universal assessment solver that detects whether active page is a Quiz, Programming Assignment, or Peer Assignment, and automates completion.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab_keyword": {
+                    "type": "string",
+                    "description": "Optional tab keyword"
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            }
+        }
     }
 ]
 
@@ -382,6 +455,60 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
         res = await pm.poll_autograder_results(tab_keyword=tab_kw, timeout_sec=t_sec)
         return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+
+    if name == "submit_peer_assignment":
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(cdp_url)
+            page = find_assessment_page(browser, arguments.get("tab_keyword"))
+            if not page:
+                return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
+            prm = PeerReviewManager(page)
+            res = prm.submit_peer_assignment(
+                title=arguments["title"],
+                report_pdf_path=arguments["report_pdf_path"],
+                video_url=arguments.get("video_url", "")
+            )
+            return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+
+    if name == "complete_peer_reviews":
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(cdp_url)
+            page = find_assessment_page(browser, arguments.get("tab_keyword"))
+            if not page:
+                return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
+            prm = PeerReviewManager(page)
+            cnt = int(arguments.get("count", 4))
+            res = prm.complete_peer_reviews(count=cnt)
+            return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+
+    if name == "auto_solve_current_assignment":
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(cdp_url)
+            page = find_assessment_page(browser, arguments.get("tab_keyword"))
+            if not page:
+                return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
+            
+            url = page.url.lower()
+            text = (await page.evaluate("() => document.body.innerText")).lower()
+
+            if "/peer/" in url or "give-feedback" in url or "reviews" in text:
+                prm = PeerReviewManager(page)
+                t_info = prm.detect_peer_task(url, text)
+                if t_info.get("mode") == "review":
+                    res = prm.complete_peer_reviews(count=t_info.get("reviews_left") or 4)
+                    return {"content": [{"type": "text", "text": json.dumps({"type": "peer_review", "result": res}, indent=2)}]}
+                else:
+                    return {"content": [{"type": "text", "text": json.dumps({"type": "peer_submission_ready", "info": t_info}, indent=2)}]}
+
+            elif "programming" in url or "upload files and submit" in text:
+                pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
+                spec = await pm.extract_task_spec(tab_keyword=arguments.get("tab_keyword"))
+                return {"content": [{"type": "text", "text": json.dumps({"type": "programming_assignment", "spec": spec}, indent=2)}]}
+
+            else:
+                adapter = get_lms_adapter(page)
+                questions = adapter.extract_questions()
+                return {"content": [{"type": "text", "text": json.dumps({"type": "quiz", "questions_count": len(questions), "sample": questions[:2]}, indent=2)}]}
 
     # Browser tools via CDP
     async with async_playwright() as p:
