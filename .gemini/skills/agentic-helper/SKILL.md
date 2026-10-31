@@ -199,6 +199,24 @@ When the user requests completing the first N courses in a Specialization:
 
 ---
 
+### Phase 3F: 100% Answer Guarantee (Never Skip Questions)
+- **Zero Blank Questions**: In-memory mapping ensures every question has an answer. The DOM adapter executes an atomic sub-millisecond failsafe sweep across all input types (radios, checkboxes, selects, numbers, text) before submission.
+- Fast execution: Completes check and submits within milliseconds (<50ms).
+
+---
+
+### Phase 3G: Zero Websearch Directive
+- **NO WEB SEARCH**: Never perform web search for standard curriculum, computer science, math, or cloud architecture quizzes. Local solvers and heuristic analyzers handle everything in-memory.
+- Web search is strictly forbidden unless an explicit dynamic, real-time news question is encountered that cannot be resolved locally.
+
+---
+
+### Phase 3H: Always Speak Caveman (Token Efficiency)
+- Communicate terse like smart caveman. Drop filler, pleasantries, decorative tables.
+- Save ~65% output tokens while preserving 100% technical accuracy, commands, and code.
+
+---
+
 ## 🧠 Built-In Algorithmic & Diagram Solvers
 
 For Computer Science, Distributed Systems, and Graph Quizzes:

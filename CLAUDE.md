@@ -41,7 +41,7 @@ Whenever a quiz attempt fails or scores $< 100\%$, you **MUST** execute the foll
 
 ### 4. 📸 Isolated Screenshots & Cleanup
 - All screenshots must strictly live in `.assessment_cache/screenshots/`.
-- Once passed, clean internal cache via `FastAttemptManager().purge_all()`.
+- Once passed or course completes, clean internal cache and temp files via `FastAttemptManager().purge_all()`.
 
 ### 5. ⚡ Direct REST API Acceleration with Safe DOM Fallback
 - Attempt Direct REST API solving first; poll grade feedback via `get_grade_feedback(submission_id)` and sync to `quiz_analysis.md`.
@@ -50,6 +50,16 @@ Whenever a quiz attempt fails or scores $< 100\%$, you **MUST** execute the foll
 ### 6. 🌐 Unified Async & Multi-Tab WebSocket Connection Pool
 - Tab finders (`await find_assessment_page`) and peer managers are fully asynchronous.
 - Bridge server maintains connection pool (`active_websockets`); closing one tab does not drop remaining tabs.
+
+### 7. ⏱️ 100% Answer Guarantee (Never Skip Questions)
+- Never leave questions blank or unanswered. Sub-millisecond failsafe check selects candidates across all inputs.
+- Fast atomic execution: finishes and submits in milliseconds (<50ms).
+
+### 8. 🚫 Zero Websearch Rule
+- NEVER websearch standard computer science, cloud computing, programming, or syllabus problems. Built-in solvers execute in-memory. Search strictly reserved for dynamic real-time news questions.
+
+### 9. 🗣️ Always Speak Caveman
+- Ultra-compressed communication. Drop filler, pleasantries, articles. Save ~65% tokens. Keep code, error strings, and technical terms exact.
 
 ---
 

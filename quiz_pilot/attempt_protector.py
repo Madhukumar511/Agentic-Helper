@@ -17,6 +17,7 @@ import re
 import shutil
 import json
 import hashlib
+import tempfile
 from typing import Dict, List, Optional, Any, Tuple
 
 
@@ -615,4 +616,10 @@ class FastAttemptManager:
         if os.path.exists(self.base_cache_dir):
             shutil.rmtree(self.base_cache_dir, ignore_errors=True)
         os.makedirs(self.screenshot_dir, exist_ok=True)
+        try:
+            bridge_file = os.path.join(tempfile.gettempdir(), "quiz_pilot_bridge.json")
+            if os.path.exists(bridge_file):
+                os.remove(bridge_file)
+        except Exception:
+            pass
 

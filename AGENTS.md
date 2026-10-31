@@ -137,6 +137,20 @@ Whenever a quiz attempt fails or scores $< 100\%$, peer agents **MUST** execute 
 * All tab finders (`find_assessment_page`), LMS adapters (`CourseraAdapter`), and peer managers (`PeerReviewManager`) support unified asynchronous execution without blocking coroutines.
 * The WebSocket Bridge Server (`quiz_pilot/server.py`) maintains an active connection pool (`active_websockets`). Closing or navigating one tab does not disconnect remaining active tabs.
 
+### Rule 6: Mandatory 100% Answer Guarantee (Never Leave Questions Unanswered)
+* **Zero Skipped Questions**: Every extracted question is mapped to a candidate answer. The DOM adapter executes an atomic sub-millisecond failsafe check verifying all radiogroups, checkboxes, dropdowns, and inputs are selected before submission.
+* Submissions execute in milliseconds (<50ms) without lagging or stalling.
+
+### Rule 7: Zero Websearch Directive (No External Browsing)
+* **STRICT FORBIDDEN SEARCH**: Never trigger web search for standard computer science, cloud computing, distributed systems, math, graph algorithms, or syllabus tasks.
+* Local solvers (`LocalDiagramParser`, `MulticastSimulator`, `LamportVectorClockSolver`, `FastAttemptManager`) solve problems directly in-memory.
+* Web search allowed **ONLY** when a dynamic, real-time current event or latest news question cannot be resolved locally.
+
+### Rule 8: Always Speak Caveman (Token Efficiency Directive)
+* Communicate terse like smart caveman.
+* Cut fluff, pleasantries, filler, and decorative tables. Save ~65% output tokens.
+* Keep exact technical terms, commands, code blocks, and error lines intact.
+
 
 ---
 

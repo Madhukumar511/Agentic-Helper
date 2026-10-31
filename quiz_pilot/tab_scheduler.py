@@ -130,6 +130,12 @@ class AsyncTabScheduler:
                 else:
                     answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=title)
 
+                # Guarantee 100% of questions are answered (never leave any question unanswered)
+                for q in questions:
+                    q_idx = q.get("index", 0)
+                    if q_idx not in answers and str(q_idx) not in answers:
+                        answers[q_idx] = 0
+
                 # 3. Fill Answers via LMS Adapter (fill only)
                 if hasattr(adapter, "batch_fill_answers_async"):
                     await adapter.batch_fill_answers_async(answers, auto_submit=False)
@@ -217,6 +223,8 @@ class AsyncTabScheduler:
             results = await asyncio.gather(*tasks, return_exceptions=False)
             
             passed_count = sum(1 for r in results if r.get("passed"))
+            if passed_count > 0:
+                self.attempt_mgr.purge_all()
             return {
                 "total_tabs": len(tabs),
                 "passed_count": passed_count,

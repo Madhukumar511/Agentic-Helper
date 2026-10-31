@@ -538,3 +538,34 @@ def test_no_duplicate_files():
         assert os.path.dirname(repo_matches[0]).endswith("quiz_pilot")
 
 
+def test_batch_fill_guarantees_no_unanswered_questions():
+    """
+    Verifies CourseraAdapter.batch_fill_answers includes the millisecond
+    failsafe sweep preventing unanswered questions.
+    """
+    import inspect
+    from quiz_pilot.lms_adapters.coursera_adapter import CourseraAdapter
+
+    src = inspect.getsource(CourseraAdapter.batch_fill_answers)
+    assert "leafGroups.forEach" in src
+    assert "hasChecked" in src
+    assert "radios[0].click()" in src
+
+
+def test_purge_all_cleans_bridge_temp_files(tmp_path):
+    """
+    Verifies FastAttemptManager.purge_all deletes both cache directory
+    and temporary bridge files.
+    """
+    cache_dir = str(tmp_path / "cache")
+    mgr = FastAttemptManager(base_cache_dir=cache_dir)
+    bridge_file = os.path.join(tempfile.gettempdir(), "quiz_pilot_bridge.json")
+    with open(bridge_file, "w") as f:
+        f.write("{}")
+    assert os.path.exists(bridge_file)
+
+    mgr.purge_all()
+    assert not os.path.exists(bridge_file)
+    assert not os.path.exists(os.path.join(cache_dir, "quiz_analysis.md"))
+
+

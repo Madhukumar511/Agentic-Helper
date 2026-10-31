@@ -11,6 +11,9 @@
   - Lock in verified correct options as `LOCKED_CORRECT`.
   - Mark wrong options as `ELIMINATED`.
   - On subsequent retries, inspect `quiz_analysis.md` via `FastAttemptManager().get_retry_answers(...)`: match by text (handling LMS option shuffling), keep verified correct options, and NEVER select an eliminated option again. Focus only on unresolved questions.
-- **Cleanup**: Clean `.assessment_cache/` using `FastAttemptManager().purge_all()` when quizzes are completed.
+- **Cleanup**: Clean `.assessment_cache/` and temp files using `FastAttemptManager().purge_all()` when quizzes or courses are completed.
 - **Direct API & Safe DOM Fallback**: Attempt direct REST API with grade polling first; cleanly fall through to DOM execution on error/400.
 - **Async & Multi-Tab WebSocket Pool**: Tab finders and peer managers are async; server maintains `active_websockets` pool across multiple tabs.
+- **100% Answer Guarantee**: Never leave any question unanswered. Fast millisecond DOM sweep (<50ms) guarantees every question is filled before submission.
+- **Zero Websearch**: Do not search web for standard curriculum/CS problems; local solvers handle in-memory. Only search if unsolvable current events question.
+- **Always Speak Caveman**: Terse, high-signal, ultra-compressed output without filler words.

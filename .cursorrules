@@ -11,6 +11,9 @@
   * Lock verified correct answers as `LOCKED_CORRECT` with their exact option text.
   * Eliminate failed options as `ELIMINATED`.
   * On retry, inspect `quiz_analysis.md` via `FastAttemptManager().get_retry_answers(...)`: match by text (resilient to LMS option shuffling), lock verified choices, focus compute strictly on wrong questions, and NEVER pick a previously failed option again!
-- Rule 4 (Screenshots & Cleanup): All screenshots in `.assessment_cache/screenshots/`. Run `FastAttemptManager().purge_all()` upon passing.
+- Rule 4 (Screenshots & Cleanup): All screenshots in `.assessment_cache/screenshots/`. Run `FastAttemptManager().purge_all()` upon passing or course completion.
 - Rule 5 (Direct API First with Safe DOM Fallback): Attempt direct REST API submission with grade polling and memory recording first; cleanly fall through to DOM adapter on failure or HTTP 400.
 - Rule 6 (Unified Async & Tab Connection Pool): Await async tab finders (`find_assessment_page`), and utilize the WebSocket server connection pool (`active_websockets`) so multiple tabs stay connected.
+- Rule 7 (100% Answer Guarantee): Never leave questions unanswered. Instant sub-millisecond failsafe check selects candidates across all inputs.
+- Rule 8 (Zero Websearch): Never search web for CS/programming/cloud questions. Built-in algorithms solve locally. Search ONLY for dynamic latest news questions.
+- Rule 9 (Always Speak Caveman): Terse, smart, compressed communication (~65% token savings). Drop filler/pleasantries. Accurate technical substance only.

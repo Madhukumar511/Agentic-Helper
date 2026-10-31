@@ -188,6 +188,11 @@ class CourseOrchestrator:
             questions = await adapter.extract_questions_async()
             if questions:
                 answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=item_title)
+                # Guarantee 100% of questions are answered (never leave any question unanswered)
+                for q in questions:
+                    q_idx = q.get("index", 0)
+                    if q_idx not in answers and str(q_idx) not in answers:
+                        answers[q_idx] = 0
                 # Fill answers only without inline submit
                 if hasattr(adapter, "batch_fill_answers_async"):
                     await adapter.batch_fill_answers_async(answers, auto_submit=False)
@@ -368,6 +373,9 @@ class CourseOrchestrator:
                 *[run_single_course(c) for c in target_courses],
                 return_exceptions=False
             )
+
+            # Clean cache and all temporary files upon specialization completion
+            self.attempt_mgr.purge_all()
 
             return {
                 "specialization": spec_url,
