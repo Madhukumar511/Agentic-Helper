@@ -542,7 +542,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         concurrency = int(arguments.get("max_concurrency", 4))
         auto_sub = arguments.get("auto_submit", True)
         scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=concurrency)
-        batch_results = await scheduler.run_parallel_batch(auto_submit=auto_sub)
+        batch_results = await scheduler.smart_multiworker(auto_submit=auto_sub)
         return {"content": [{"type": "text", "text": json.dumps(batch_results, indent=2)}]}
 
     if name == "open_and_solve_parallel":

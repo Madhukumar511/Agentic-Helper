@@ -28,6 +28,61 @@ class CourseOrchestrator:
         self.max_concurrency = max_concurrency
         self.attempt_mgr = FastAttemptManager()
 
+    async def _solve_item_on_page(self, page, item: Dict[str, Any]) -> Dict[str, Any]:
+        """Solves a single quiz, peer review, or assignment on the specified page/tab."""
+        item_title = item.get("title", "")
+        item_url = item.get("url", "")
+        item_type = item.get("type", "quiz")
+
+        if not item_url:
+            return {"title": item_title, "status": "skipped_no_url"}
+
+        try:
+            await page.evaluate("(u) => window.location.href = u", item_url)
+        except Exception:
+            try:
+                await page.goto(item_url, wait_until="domcontentloaded")
+            except Exception:
+                pass
+        await asyncio.sleep(4)
+
+        item_res = {
+            "title": item_title,
+            "type": item_type,
+            "url": item_url,
+            "status": "pending"
+        }
+
+        if item_type == "quiz":
+            adapter = get_lms_adapter(page)
+            questions = adapter.extract_questions()
+            if questions:
+                answers = {q["index"]: 0 for q in questions}
+                if hasattr(adapter, "batch_fill_answers"):
+                    adapter.batch_fill_answers(answers, auto_submit=True)
+                else:
+                    for q in questions:
+                        adapter.fill_answer(q["index"], 0)
+                    adapter.submit_assessment()
+                item_res["status"] = "submitted"
+                item_res["questions_solved"] = len(questions)
+
+        elif item_type == "peer_review":
+            prm = PeerReviewManager(page=page)
+            rev_res = prm.complete_peer_reviews(count=4)
+            item_res["status"] = rev_res.get("status")
+            item_res["reviews_done"] = rev_res.get("reviews_submitted")
+
+        elif item_type == "peer":
+            prm = PeerReviewManager(page=page)
+            t_info = prm.detect_peer_task(item_url)
+            item_res["peer_mode"] = t_info.get("mode")
+            if t_info.get("mode") == "review":
+                prm.complete_peer_reviews(count=4)
+                item_res["status"] = "reviews_completed"
+
+        return item_res
+
     async def auto_complete_course(
         self,
         course_url: str,
@@ -65,57 +120,45 @@ class CourseOrchestrator:
                 except Exception:
                     direct_api = None
 
-            # 2. Iterate and solve each pending assignment
-            for item in pending_items:
-                item_title = item.get("title", "")
-                item_url = item.get("url", "")
-                item_type = item.get("type", "quiz")
+            # 2. Multi-Tab Parallel Execution across pending assignments / modules
+            num_workers = min(self.max_concurrency, len(pending_items))
+            if num_workers <= 1:
+                for item in pending_items:
+                    res = await self._solve_item_on_page(page, item)
+                    results.append(res)
+            else:
+                worker_pages = [page]
+                for _ in range(num_workers - 1):
+                    p_new = await context.new_page()
+                    worker_pages.append(p_new)
 
-                if not item_url:
-                    continue
+                queue = asyncio.Queue()
+                for it in pending_items:
+                    await queue.put(it)
 
-                # Navigate to assignment
-                await page.evaluate("(u) => window.location.href = u", item_url)
-                await asyncio.sleep(4)
+                async def worker_loop(w_page, w_id):
+                    w_res = []
+                    while True:
+                        try:
+                            it = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        res = await self._solve_item_on_page(w_page, it)
+                        w_res.append(res)
+                        queue.task_done()
+                    return w_res
 
-                item_res = {
-                    "title": item_title,
-                    "type": item_type,
-                    "url": item_url,
-                    "status": "pending"
-                }
+                tasks = [worker_loop(w_page, idx) for idx, w_page in enumerate(worker_pages)]
+                worker_outputs = await asyncio.gather(*tasks, return_exceptions=False)
+                for out in worker_outputs:
+                    results.extend(out)
 
-                if item_type == "quiz":
-                    # Use fast DOM adapter or Direct API
-                    adapter = get_lms_adapter(page)
-                    questions = adapter.extract_questions()
-                    if questions:
-                        # Auto-solve batch with highest confidence heuristics
-                        answers = {q["index"]: 0 for q in questions}
-                        if hasattr(adapter, "batch_fill_answers"):
-                            adapter.batch_fill_answers(answers, auto_submit=True)
-                        else:
-                            for q in questions:
-                                adapter.fill_answer(q["index"], 0)
-                            adapter.submit_assessment()
-                        item_res["status"] = "submitted"
-                        item_res["questions_solved"] = len(questions)
-
-                elif item_type == "peer_review":
-                    prm = PeerReviewManager(page=page)
-                    rev_res = prm.complete_peer_reviews(count=4)
-                    item_res["status"] = rev_res.get("status")
-                    item_res["reviews_done"] = rev_res.get("reviews_submitted")
-
-                elif item_type == "peer":
-                    prm = PeerReviewManager(page=page)
-                    t_info = prm.detect_peer_task(item_url)
-                    item_res["peer_mode"] = t_info.get("mode")
-                    if t_info.get("mode") == "review":
-                        prm.complete_peer_reviews(count=4)
-                        item_res["status"] = "reviews_completed"
-
-                results.append(item_res)
+                # Close helper tabs (leave the main page open)
+                for w_page in worker_pages[1:]:
+                    try:
+                        await w_page.close()
+                    except Exception:
+                        pass
 
             # Clean cache upon completion
             self.attempt_mgr.purge_all()

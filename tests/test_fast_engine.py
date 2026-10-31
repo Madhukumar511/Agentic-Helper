@@ -29,6 +29,12 @@ def test_orchestrator_initialization():
     assert orch.max_concurrency == 6
     assert orch.cdp_url == "http://127.0.0.1:9222"
 
+def test_smart_multiworker_scheduler_init():
+    from quiz_pilot.tab_scheduler import AsyncTabScheduler
+    scheduler = AsyncTabScheduler(cdp_url="http://127.0.0.1:9222", max_concurrency=5)
+    assert scheduler.max_concurrency == 5
+    assert hasattr(scheduler, "smart_multiworker")
+
 def test_mcp_fast_tools_registered():
     tool_names = [t["name"] for t in TOOLS]
     assert "crawl_syllabus" in tool_names

@@ -295,14 +295,14 @@ def cmd_clean(args):
 
 def cmd_solve_all(args):
     """Solves and submits all open assessment tabs in parallel, or opens URLs and solves."""
-    from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync, open_and_solve_parallel_sync
+    from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync, open_and_solve_parallel_sync, smart_multiworker_sync
     urls = getattr(args, "urls", [])
     if urls:
         console.print(f"[bold cyan]🚀 Opening {len(urls)} URLs in background tabs and running parallel workers (Max Concurrency: {args.concurrency})...[/bold cyan]")
         res = open_and_solve_parallel_sync(urls=urls, cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
     else:
-        console.print(f"[bold cyan]🚀 Starting Concurrent Multi-Tab Scheduler across open tabs (Max Concurrency: {args.concurrency})...[/bold cyan]")
-        res = solve_all_open_quizzes_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
+        console.print(f"[bold cyan]🚀 Starting Smart Multi-Tab Worker Engine (Max Concurrency: {args.concurrency})...[/bold cyan]")
+        res = smart_multiworker_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
 
     console.print(f"[bold green]✓ Completed multi-tab run: {res.get('passed_count', 0)}/{res.get('total_tabs', 0)} passed.[/bold green]")
     for r in res.get("results", []):
