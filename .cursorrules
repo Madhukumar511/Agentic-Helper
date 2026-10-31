@@ -1,0 +1,10 @@
+# Cursor Rules for Agentic-Helper
+
+- Rule 1 (Zero-Scratch Files): NEVER write one-off course scripts (e.g. solve_*.py, check.py) to disk. All quiz solving must run in-memory via CourseraAdapter, FastAttemptManager, or MCP tools.
+- Rule 2 (Windows Browser Launcher): Use `ensure_browser(url=course_url, port=9222)`. It automatically launches Edge/Chrome and navigates to the target URL even if the browser is already running on port 9222.
+- Rule 3 (Mandatory quiz_analysis.md Failure Memory & Option Elimination):
+  * When an attempt scores < 100%, immediately create/update `quiz_analysis.md` via `FastAttemptManager().record_attempt(...)` or MCP `record_quiz_analysis`.
+  * Lock verified correct answers as `LOCKED_CORRECT` with their exact option text.
+  * Eliminate failed options as `ELIMINATED`.
+  * On retry, inspect `quiz_analysis.md` via `FastAttemptManager().get_retry_answers(...)`: match by text (resilient to LMS option shuffling), lock verified choices, focus compute strictly on wrong questions, and NEVER pick a previously failed option again!
+- Rule 4 (Screenshots & Cleanup): All screenshots in `.assessment_cache/screenshots/`. Run `FastAttemptManager().purge_all()` upon passing.
