@@ -386,21 +386,26 @@ def cmd_complete_reviews(args):
 
 def cmd_crawl_syllabus(args):
     """Crawls course syllabus table and prints status."""
-    from playwright.sync_api import sync_playwright
+    import asyncio
+    from playwright.async_api import async_playwright
     from quiz_pilot.syllabus_crawler import SyllabusCrawler
-    with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
-        from quiz_pilot.mcp_server import find_assessment_page
-        page = find_assessment_page(browser)
-        if not page:
-            console.print("[bold red]No browser page found.[/bold red]")
-            return
-        crawler = SyllabusCrawler(page=page)
-        res = crawler.crawl_course_assignments(args.course)
-        console.print(f"[bold green]Course:[/] {res.get('course_slug')}")
-        console.print(f"Total: {res.get('total_items')} | Completed: {res.get('completed_count')} | Pending: {res.get('pending_count')}")
-        for it in res.get("execution_plan", []):
-            console.print(f" - [{it.get('type')}] [bold white]{it.get('title')}[/] ({it.get('status')})")
+
+    async def _crawl():
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = context.pages[0] if context.pages else await context.new_page()
+            if not page:
+                console.print("[bold red]No browser page found.[/bold red]")
+                return
+            crawler = SyllabusCrawler(page=page)
+            res = await crawler.crawl_course_assignments(args.course)
+            console.print(f"[bold green]Course:[/] {res.get('course_slug')}")
+            console.print(f"Total: {res.get('total_items')} | Completed: {res.get('completed_count')} | Pending: {res.get('pending_count')}")
+            for it in res.get("execution_plan", []):
+                console.print(f" - [{it.get('type')}] [bold white]{it.get('title')}[/] ({it.get('status')})")
+
+    asyncio.run(_crawl())
 
 
 def cmd_auto_course(args):

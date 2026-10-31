@@ -5,7 +5,7 @@ extracting status, grade weights, and URLs to generate a zero-touch execution pl
 """
 
 import re
-import time
+import asyncio
 from typing import List, Dict, Any, Optional
 
 class SyllabusCrawler:
@@ -17,7 +17,7 @@ class SyllabusCrawler:
     def set_page(self, page):
         self.page = page
 
-    def crawl_course_assignments(self, course_slug_or_url: str) -> Dict[str, Any]:
+    async def crawl_course_assignments(self, course_slug_or_url: str) -> Dict[str, Any]:
         """
         Navigates to the course assignments table and extracts all items with status.
         """
@@ -35,17 +35,17 @@ class SyllabusCrawler:
         current_url = getattr(self.page, "url", "")
 
         if target_url not in current_url:
-            self.page.evaluate("(u) => window.location.href = u", target_url)
-            time.sleep(4)
+            await self.page.evaluate("(u) => window.location.href = u", target_url)
+            await asyncio.sleep(4)
 
         # Wait for assignments table to render
         try:
-            self.page.wait_for_selector("table, div[role=\"table\"], [data-testid=\"grade-item\"], main", timeout=12000)
-            time.sleep(1)
+            await self.page.wait_for_selector("table, div[role=\"table\"], [data-testid=\"grade-item\"], main", timeout=12000)
+            await asyncio.sleep(1)
         except Exception:
             pass
 
-        items = self.page.evaluate('''() => {
+        items = await self.page.evaluate('''() => {
             const results = [];
             const rows = Array.from(document.querySelectorAll('tr, div[role="row"], div[data-testid*="assignment"]'));
             
@@ -116,7 +116,7 @@ class SyllabusCrawler:
             "execution_plan": incomplete
         }
 
-    def crawl_specialization_courses(self, spec_slug_or_url: str) -> List[Dict[str, str]]:
+    async def crawl_specialization_courses(self, spec_slug_or_url: str) -> List[Dict[str, str]]:
         """
         Crawls a Coursera Specialization page and extracts all child courses in sequence.
         Returns a list of dicts: [{"title": "Course Name", "slug": "course-slug", "url": "https://..."}]
@@ -132,16 +132,16 @@ class SyllabusCrawler:
 
         current_url = getattr(self.page, "url", "")
         if target_url not in current_url:
-            self.page.evaluate("(u) => window.location.href = u", target_url)
-            time.sleep(4)
+            await self.page.evaluate("(u) => window.location.href = u", target_url)
+            await asyncio.sleep(4)
 
         try:
-            self.page.wait_for_selector("a[href*=\"/learn/\"], h3", timeout=12000)
-            time.sleep(1)
+            await self.page.wait_for_selector("a[href*=\"/learn/\"], h3", timeout=12000)
+            await asyncio.sleep(1)
         except Exception:
             pass
 
-        courses = self.page.evaluate('''() => {
+        courses = await self.page.evaluate('''() => {
             const courseLinks = Array.from(document.querySelectorAll('a[href*="/learn/"]'));
             const results = [];
             const seen = new Set();

@@ -8,12 +8,13 @@ from quiz_pilot.direct_api_solver import CourseraDirectAPI
 from quiz_pilot.course_orchestrator import CourseOrchestrator
 from quiz_pilot.mcp_server import TOOLS
 
-def test_syllabus_crawler_missing_page_raises():
+@pytest.mark.anyio
+async def test_syllabus_crawler_missing_page_raises():
     crawler = SyllabusCrawler(page=None)
     with pytest.raises(ValueError, match="No active browser page attached"):
-        crawler.crawl_course_assignments("https://www.coursera.org/learn/cloud-networking")
+        await crawler.crawl_course_assignments("https://www.coursera.org/learn/cloud-networking")
     with pytest.raises(ValueError, match="No active browser page attached"):
-        crawler.crawl_specialization_courses("https://www.coursera.org/specializations/cloud-computing")
+        await crawler.crawl_specialization_courses("https://www.coursera.org/specializations/cloud-computing")
 
 def test_direct_api_headers():
     api = CourseraDirectAPI(cauth_token="TEST_CAUTH_VAL", csrf_token="TEST_CSRF_VAL")

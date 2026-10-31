@@ -46,7 +46,7 @@ class CourseOrchestrator:
 
             # 1. Syllabus Crawl
             crawler = SyllabusCrawler(page=page)
-            plan = crawler.crawl_course_assignments(course_url)
+            plan = await crawler.crawl_course_assignments(course_url)
             pending_items = plan.get("execution_plan", [])
 
             if not pending_items:
@@ -143,7 +143,7 @@ class CourseOrchestrator:
             page = context.pages[0] if context.pages else await context.new_page()
 
             crawler = SyllabusCrawler(page=page)
-            all_courses = crawler.crawl_specialization_courses(spec_url)
+            all_courses = await crawler.crawl_specialization_courses(spec_url)
             if not all_courses:
                 return {"error": f"No courses found on specialization page: {spec_url}"}
 

@@ -634,7 +634,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             if not page:
                 return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
             crawler = SyllabusCrawler(page=page)
-            res = crawler.crawl_course_assignments(arguments["course_url"])
+            res = await crawler.crawl_course_assignments(arguments["course_url"])
             return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
 
     if name == "auto_complete_entire_course":
