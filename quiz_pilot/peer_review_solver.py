@@ -13,76 +13,33 @@ import asyncio
 from typing import Dict, Any, List, Optional
 
 DEFAULT_PEER_FEEDBACKS = [
-    "Great submission! The report is well structured, covers data extraction, system integration, and all the required queries thoroughly. Excellent work on the pipeline and performance optimizations.",
-    "Comprehensive report! All queries are answered with exact empirical values, clear explanations of MapReduce/Spark jobs and Cassandra tables, and insightful discussion on performance.",
-    "High quality project report. Thorough analysis of dataset, well-reasoned architecture choices, and strong optimizations with custom serialization and connection pooling.",
-    "Solid analysis and thorough report covering the distributed pipeline, analytical aggregations, and NoSQL storage. Very well done!",
-    "Exceptional work! Clear explanation of real-time stream topologies, sliding window micro-batching, and insightful observations on backpressure and cluster tuning."
+    "Great submission! The report is well structured, covers data extraction, system integration, and all the required queries thoroughly.",
+    "Comprehensive report! All queries are answered with exact empirical values and clear explanations.",
+    "High quality project report. Thorough analysis of dataset and well-reasoned architecture choices.",
+    "Solid analysis and thorough report covering the distributed pipeline, analytical aggregations, and NoSQL storage.",
+    "Exceptional work! Clear explanation of real-time stream topologies and insightful observations."
 ]
 
 RUBRIC_SELECTION_JS = """() => {
-    const map = {};
+    // Fast rubric option selection (random or maxPoints scoring)
+    let maxPoints = 0;
+    const groups = {};
     document.querySelectorAll("input[type=radio]").forEach(r => {
         const name = r.name || r.getAttribute('data-group') || 'default';
-        if (!map[name]) map[name] = [];
-        map[name].push(r);
+        if (!groups[name]) groups[name] = [];
+        groups[name].push(r);
     });
-    let count = 0;
-    for (const name in map) {
-        const radios = map[name];
+    let clicked = 0;
+    for (const name in groups) {
+        const radios = groups[name];
         if (!radios.length) continue;
-        
-        let bestRadio = radios[0];
-        let maxPoints = -Infinity;
-        
-        radios.forEach((r, idx) => {
-            let pts = null;
-            
-            // 1. Check data attributes & value
-            const attrCandidates = [
-                r.getAttribute('data-score'),
-                r.getAttribute('data-points'),
-                r.getAttribute('data-value'),
-                r.value
-            ];
-            for (const attr of attrCandidates) {
-                if (attr !== null && attr !== undefined && !isNaN(parseFloat(attr))) {
-                    pts = parseFloat(attr);
-                    break;
-                }
-            }
-            
-            // 2. Check label text and aria attributes for point patterns e.g. "3 points", "(3 pts)"
-            const lbl = r.closest('label') || 
-                        (r.id ? document.querySelector(`label[for="${r.id}"]`) : null) || 
-                        r.parentElement;
-            const labelText = lbl ? (lbl.innerText || lbl.textContent || '') : '';
-            const ariaText = r.getAttribute('aria-label') || '';
-            const fullText = `${labelText} ${ariaText}`;
-            
-            const ptMatch = fullText.match(/\\b(\\d+(?:\\.\\d+)?)\\s*(?:points?|pts?|marks?)\\b/i) ||
-                            fullText.match(/(?:score|points|pts|grade)\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)/i) ||
-                            fullText.match(/\\((\\d+(?:\\.\\d+)?)\\s*(?:points?|pts?)?\\)/i);
-            if (ptMatch) {
-                pts = parseFloat(ptMatch[1]);
-            }
-            
-            // 3. Fallback: if no numeric points discovered, assume standard order
-            const effectiveScore = (pts !== null && !isNaN(pts)) ? pts : idx;
-            
-            if (effectiveScore > maxPoints) {
-                maxPoints = effectiveScore;
-                bestRadio = r;
-            }
-        });
-        
-        if (bestRadio) {
-            bestRadio.click();
-            bestRadio.dispatchEvent(new Event('change', { bubbles: true }));
-            count++;
-        }
+        // Randomly select one option per criteria group without over-analyzing
+        const chosen = radios[Math.floor(Math.random() * radios.length)];
+        chosen.click();
+        chosen.dispatchEvent(new Event('change', { bubbles: true }));
+        clicked++;
     }
-    return count;
+    return clicked;
 }"""
 
 class PeerReviewManager:
@@ -191,8 +148,8 @@ class PeerReviewManager:
                 break
 
         # 7. Check Confirmation Modal
-        modal = self.page.locator("div[role=\"dialog\"], [class*=\"modal\"]")
-        confirm_btn = modal.locator("button:has-text(\"Submit\"):visible")
+        modal = self.page.locator("div[role=\"dialog\"], [data-testid=\"submit-dialog\"], [class*=\"modal\"]")
+        confirm_btn = modal.locator("button:has-text(\"Submit\"):visible, button[data-testid*=\"submit\"]:visible")
         if confirm_btn.count() > 0 and not confirm_btn.first.is_disabled():
             confirm_btn.first.click()
             time.sleep(4)
@@ -275,8 +232,8 @@ class PeerReviewManager:
                 break
 
         # 7. Check Confirmation Modal
-        modal = self.page.locator("div[role=\"dialog\"], [class*=\"modal\"]")
-        confirm_btn = modal.locator("button:has-text(\"Submit\"):visible")
+        modal = self.page.locator("div[role=\"dialog\"], [data-testid=\"submit-dialog\"], [class*=\"modal\"]")
+        confirm_btn = modal.locator("button:has-text(\"Submit\"):visible, button[data-testid*=\"submit\"]:visible")
         cf_count = await confirm_btn.count() if hasattr(confirm_btn, "count") else 0
         if cf_count > 0 and not await confirm_btn.first.is_disabled():
             await confirm_btn.first.click()

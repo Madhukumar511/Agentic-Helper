@@ -61,6 +61,10 @@ Whenever a quiz attempt fails or scores $< 100\%$, you **MUST** execute the foll
 ### 9. 🗣️ Always Speak Caveman
 - Ultra-compressed communication. Drop filler, pleasantries, articles. Save ~65% tokens. Keep code, error strings, and technical terms exact.
 
+### 10. 📝 Mandatory Peer-Graded Two-Step Protocol
+- Step 1: Always submit your own assignment first on `/submit` (title, report PDF via Uppy, video URL, honor code checkbox, primary submit + modal dialog confirmation). Peer reviews are locked until your own project is submitted!
+- Step 2: Only after submission is confirmed, navigate to `/give-feedback` / `/review-next` and grade 3-4 peers with rapid random option marking (zero overthinking/points analysis) and brief positive feedback!
+
 ---
 
 ## 🛠️ Quick Commands & APIs

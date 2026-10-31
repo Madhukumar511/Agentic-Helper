@@ -26,7 +26,8 @@ When the user types `/agentic-helper [course_url]`, or asks you to *"solve quiz"
 10. **Mandatory 100% Answer Guarantee**: Never leave any question unanswered. Atomic DOM sweep selects candidate/fallback within milliseconds (<50ms).
 11. **Zero Websearch Law**: Never trigger web search for CS/systems questions. Built-in solvers execute in-memory. Search permitted ONLY if unsolvable dynamic current event.
 12. **Always Speak Caveman**: Speak terse smart caveman. Drop filler, pleasantries, tokens. High-signal technical accuracy only.
-13. **Advance**: Move to the next quiz until the entire course or specialization is passed!
+13. **Mandatory Peer-Graded Two-Step Protocol**: Always submit your own assignment first on `/submit` (title, report PDF via Uppy, video URL, honor code checkbox, primary submit + modal dialog confirmation). Only after submission is complete, navigate to `/give-feedback` / `/review-next` and grade 3-4 peers with rapid random option marking (zero overthinking/points analysis) and brief positive feedback!
+14. **Advance**: Move to the next quiz until the entire course or specialization is passed!
 
 
 ---

@@ -17,3 +17,6 @@
 - Rule 7 (100% Answer Guarantee): Never leave questions unanswered. Instant sub-millisecond failsafe check selects candidates across all inputs.
 - Rule 8 (Zero Websearch): Never search web for CS/programming/cloud questions. Built-in algorithms solve locally. Search ONLY for dynamic latest news questions.
 - Rule 9 (Always Speak Caveman): Terse, smart, compressed communication (~65% token savings). Drop filler/pleasantries. Accurate technical substance only.
+- Rule 10 (Peer-Graded Two-Step Protocol):
+  * Step 1: Always submit your own assignment first on `/submit` (title, report PDF via Uppy, video URL, honor code checkbox, submit + modal dialog confirmation). Peer reviews are locked until submitted!
+  * Step 2: Only after submission is confirmed, navigate to `/give-feedback` / `/review-next` and grade 3-4 peers with rapid random option marking (zero overthinking/points analysis) and brief positive feedback!

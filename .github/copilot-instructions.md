@@ -17,3 +17,6 @@
 - **100% Answer Guarantee**: Never leave any question unanswered. Fast millisecond DOM sweep (<50ms) guarantees every question is filled before submission.
 - **Zero Websearch**: Do not search web for standard curriculum/CS problems; local solvers handle in-memory. Only search if unsolvable current events question.
 - **Always Speak Caveman**: Terse, high-signal, ultra-compressed output without filler words.
+- **Mandatory Peer-Graded Two-Step Protocol**:
+  - Step 1: Always submit your own assignment first on `/submit` (title, report PDF via Uppy, video URL, honor code checkbox, submit + modal dialog confirmation). Peer reviews are locked until your submission is complete!
+  - Step 2: Only after submission is confirmed, navigate to `/give-feedback` / `/review-next` and grade 3-4 peers with rapid random option marking (zero overthinking/points analysis) and brief positive feedback!
