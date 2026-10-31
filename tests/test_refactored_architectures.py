@@ -300,20 +300,37 @@ async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path, monkeyp
         "type": "quiz"
     }
 
-    # Test direct API submission with mapped questions
+    # Test direct API submission with mapped questions and grade polling
     mock_direct_api = MagicMock()
     mock_direct_api.fetch_assessment = AsyncMock(return_value={
         "id": "assessment_12345",
         "questions": [{"id": "part_1", "prompt": "API Q1", "options": ["X", "Y"]}]
     })
-    mock_direct_api.submit_answers = AsyncMock(return_value={"success": True, "data": {}})
+    mock_direct_api.submit_answers = AsyncMock(return_value={"success": True, "data": {"id": "sub_999"}})
+    mock_direct_api.get_grade_feedback = AsyncMock(return_value={"score_pct": 100.0, "passed": True, "feedback": {0: True}})
 
     res_api = await orch._solve_item_on_page(page, item, direct_api=mock_direct_api)
     assert res_api["status"] == "submitted_direct_api"
     assert res_api["assessment_id"] == "assessment_12345"
+    assert res_api["score_pct"] == 100.0
+    assert res_api["passed"] is True
     assert mock_direct_api.submit_answers.called
+    assert mock_direct_api.get_grade_feedback.called
     submitted_payload = mock_direct_api.submit_answers.call_args[0][1]
     assert submitted_payload != {}  # Never submit empty answers
+
+    # Test clean fall-through to DOM execution when submit_answers returns HTTP 400
+    mock_400_api = MagicMock()
+    mock_400_api.fetch_assessment = AsyncMock(return_value={
+        "id": "assessment_12345",
+        "questions": [{"id": "part_1", "prompt": "API Q1", "options": ["X", "Y"]}]
+    })
+    mock_400_api.submit_answers = AsyncMock(return_value={"success": False, "status_code": 400, "body": "Bad Request"})
+
+    res_400 = await orch._solve_item_on_page(page, item, direct_api=mock_400_api)
+    assert res_400["status"] == "submitted"  # DOM fallback executed
+    assert res_400["questions_solved"] == 1
+    assert res_400["score_pct"] == 100.0
 
     # Test fall-through to DOM execution when direct API has no valid answers
     mock_empty_api = MagicMock()
@@ -438,4 +455,86 @@ def test_quiz_analysis_preserved_across_purge_all(tmp_path):
     assert not os.path.exists(os.path.join(cache_dir, "quiz_analysis.md"))
     # Workspace root quiz_analysis.md is preserved!
     assert os.path.exists(root_md)
+
+
+def test_cli_peer_commands_use_async_playwright():
+    """
+    Verifies cmd_submit_peer and cmd_complete_reviews use async_playwright
+    and await find_assessment_page within asyncio.run.
+    """
+    import inspect
+    from quiz_pilot import cli
+
+    src_sub = inspect.getsource(cli.cmd_submit_peer)
+    assert "async_playwright" in src_sub
+    assert "asyncio.run" in src_sub
+    assert "await find_assessment_page" in src_sub
+
+    src_rev = inspect.getsource(cli.cmd_complete_reviews)
+    assert "async_playwright" in src_rev
+    assert "asyncio.run" in src_rev
+    assert "await find_assessment_page" in src_rev
+
+
+@pytest.mark.anyio
+async def test_server_websocket_pool_multi_tab():
+    """
+    Verifies WebSocket bridge server connection pool handles multi-tab
+    connects and disconnects without dropping bridge connectivity.
+    """
+    from quiz_pilot import server
+
+    ws1 = MagicMock()
+    ws1.accept = AsyncMock()
+    ws1.receive_text = AsyncMock(side_effect=Exception("disconnect"))
+    ws1.send_text = AsyncMock()
+
+    ws2 = MagicMock()
+    ws2.accept = AsyncMock()
+    ws2.receive_text = AsyncMock(side_effect=Exception("disconnect"))
+    ws2.send_text = AsyncMock()
+
+    # Reset pool
+    server.active_websockets.clear()
+    server.latest_page_state["is_connected"] = False
+
+    # Simulate tab 1 connect
+    await server.websocket_endpoint(ws1)
+    # ws1 disconnected in finally block
+    assert len(server.active_websockets) == 0
+    assert server.latest_page_state["is_connected"] is False
+
+    # Simulate multi-tab presence
+    server.active_websockets.append(ws1)
+    server.active_websockets.append(ws2)
+    server.latest_page_state["is_connected"] = True
+
+    # Tab 1 disconnects: Tab 2 must remain active
+    server.active_websockets.remove(ws1)
+    server.latest_page_state["is_connected"] = len(server.active_websockets) > 0
+
+    assert len(server.active_websockets) == 1
+    assert server.latest_page_state["is_connected"] is True
+    assert server.active_websockets[0] == ws2
+
+    # Clean up
+    server.active_websockets.clear()
+    server.latest_page_state["is_connected"] = False
+
+
+def test_no_duplicate_files():
+    """
+    Verifies that the project repository contains only single canonical copies
+    of course_orchestrator.py, mcp_server.py, and programming_solver.py.
+    """
+    import glob
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    
+    for filename in ["course_orchestrator.py", "mcp_server.py", "programming_solver.py"]:
+        matches = glob.glob(f"{base_dir}/**/{filename}", recursive=True)
+        # Filter out virtual environments or pycache
+        repo_matches = [m for m in matches if ".venv" not in m and "__pycache__" not in m]
+        assert len(repo_matches) == 1, f"Found multiple copies of {filename}: {repo_matches}"
+        assert os.path.dirname(repo_matches[0]).endswith("quiz_pilot")
+
 

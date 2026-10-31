@@ -43,6 +43,14 @@ Whenever a quiz attempt fails or scores $< 100\%$, you **MUST** execute the foll
 - All screenshots must strictly live in `.assessment_cache/screenshots/`.
 - Once passed, clean internal cache via `FastAttemptManager().purge_all()`.
 
+### 5. ⚡ Direct REST API Acceleration with Safe DOM Fallback
+- Attempt Direct REST API solving first; poll grade feedback via `get_grade_feedback(submission_id)` and sync to `quiz_analysis.md`.
+- If unsupported, returns HTTP 400, or fails, cleanly fall through to DOM execution without crashing.
+
+### 6. 🌐 Unified Async & Multi-Tab WebSocket Connection Pool
+- Tab finders (`await find_assessment_page`) and peer managers are fully asynchronous.
+- Bridge server maintains connection pool (`active_websockets`); closing one tab does not drop remaining tabs.
+
 ---
 
 ## 🛠️ Quick Commands & APIs

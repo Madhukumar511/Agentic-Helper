@@ -185,6 +185,20 @@ When the user requests completing the first N courses in a Specialization:
 
 ---
 
+### Phase 3D: Direct REST API Acceleration with Safe DOM Fallback
+- `CourseOrchestrator` automatically queries Coursera REST/GraphQL state (`__APOLLO_STATE__`) for `assessmentId`.
+- Maps questions from REST payload, generates retry answers from memory, and submits directly without UI delays.
+- Automatically polls `get_grade_feedback(submission_id)` and records score to `quiz_analysis.md`.
+- **Safe Fallback**: If Direct API submission is unsupported, returns HTTP 400, or fails, the orchestrator cleanly falls through to the DOM adapter without crashing.
+
+---
+
+### Phase 3E: Unified Async & Multi-Tab WebSocket Connection Pool
+- All browser interactions, tab finders (`await find_assessment_page`), and peer managers use non-blocking coroutines.
+- Bridge server maintains connection pool (`active_websockets` in `quiz_pilot/server.py`), allowing multiple tabs to stay connected and isolated.
+
+---
+
 ## 🧠 Built-In Algorithmic & Diagram Solvers
 
 For Computer Science, Distributed Systems, and Graph Quizzes:

@@ -354,34 +354,48 @@ def cmd_poll_grader(args):
 
 def cmd_submit_peer(args):
     """Submits peer report PDF and optional video URL."""
-    from playwright.sync_api import sync_playwright
+    import asyncio
+    from playwright.async_api import async_playwright
     from quiz_pilot.peer_review_solver import PeerReviewManager
-    with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
-        from quiz_pilot.mcp_server import find_assessment_page
-        page = find_assessment_page(browser, args.tab)
-        if not page:
-            console.print("[bold red]No assessment page found.[/bold red]")
-            return
-        prm = PeerReviewManager(page)
-        res = prm.submit_peer_assignment(title=args.title, report_pdf_path=args.pdf, video_url=args.video or "")
-        console.print(f"[bold green]✓ Peer Report Submitted:[/] {res.get('title')}")
+    from quiz_pilot.mcp_server import find_assessment_page
+
+    async def _submit():
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
+            page = await find_assessment_page(browser, args.tab)
+            if not page:
+                console.print("[bold red]No assessment page found.[/bold red]")
+                return
+            prm = PeerReviewManager(page)
+            res = prm.submit_peer_assignment(title=args.title, report_pdf_path=args.pdf, video_url=args.video or "")
+            if asyncio.iscoroutine(res):
+                res = await res
+            console.print(f"[bold green]✓ Peer Report Submitted:[/] {res.get('title')}")
+
+    asyncio.run(_submit())
 
 
 def cmd_complete_reviews(args):
     """Completes required peer reviews."""
-    from playwright.sync_api import sync_playwright
+    import asyncio
+    from playwright.async_api import async_playwright
     from quiz_pilot.peer_review_solver import PeerReviewManager
-    with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
-        from quiz_pilot.mcp_server import find_assessment_page
-        page = find_assessment_page(browser, args.tab)
-        if not page:
-            console.print("[bold red]No assessment page found.[/bold red]")
-            return
-        prm = PeerReviewManager(page)
-        res = prm.complete_peer_reviews(count=args.count)
-        console.print(f"[bold green]✓ Peer Reviews Finished:[/] Submitted: {res.get('reviews_submitted')}, Remaining: {res.get('reviews_remaining')}")
+    from quiz_pilot.mcp_server import find_assessment_page
+
+    async def _complete():
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
+            page = await find_assessment_page(browser, args.tab)
+            if not page:
+                console.print("[bold red]No assessment page found.[/bold red]")
+                return
+            prm = PeerReviewManager(page)
+            res = prm.complete_peer_reviews(count=args.count)
+            if asyncio.iscoroutine(res):
+                res = await res
+            console.print(f"[bold green]✓ Peer Reviews Finished:[/] Submitted: {res.get('reviews_submitted')}, Remaining: {res.get('reviews_remaining')}")
+
+    asyncio.run(_complete())
 
 
 def cmd_crawl_syllabus(args):

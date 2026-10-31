@@ -128,6 +128,15 @@ Whenever a quiz attempt fails or scores $< 100\%$, peer agents **MUST** execute 
   *(Or execute shell command: `agentic-helper clean`)*
 * Leaving behind any scratch scripts, dumped JSONs, or screenshots is strictly prohibited.
 
+### Rule 4: Direct REST API Acceleration with Safe DOM Fallback
+* When using `CourseOrchestrator`, attempt Direct REST API solving first by extracting `assessmentId` and mapping questions.
+* Poll `direct_api.get_grade_feedback(submission_id)` and record results in `quiz_analysis.md`.
+* **Zero Failure Stalling**: If Direct API submission is unsupported, returns HTTP 400, or fails, the agent must cleanly fall through to DOM execution via LMS adapters without crashing or manual intervention.
+
+### Rule 5: Unified Async Execution & Multi-Tab WebSocket Connection Pool
+* All tab finders (`find_assessment_page`), LMS adapters (`CourseraAdapter`), and peer managers (`PeerReviewManager`) support unified asynchronous execution without blocking coroutines.
+* The WebSocket Bridge Server (`quiz_pilot/server.py`) maintains an active connection pool (`active_websockets`). Closing or navigating one tab does not disconnect remaining active tabs.
+
 
 ---
 

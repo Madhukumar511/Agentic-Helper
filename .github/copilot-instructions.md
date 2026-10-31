@@ -12,3 +12,5 @@
   - Mark wrong options as `ELIMINATED`.
   - On subsequent retries, inspect `quiz_analysis.md` via `FastAttemptManager().get_retry_answers(...)`: match by text (handling LMS option shuffling), keep verified correct options, and NEVER select an eliminated option again. Focus only on unresolved questions.
 - **Cleanup**: Clean `.assessment_cache/` using `FastAttemptManager().purge_all()` when quizzes are completed.
+- **Direct API & Safe DOM Fallback**: Attempt direct REST API with grade polling first; cleanly fall through to DOM execution on error/400.
+- **Async & Multi-Tab WebSocket Pool**: Tab finders and peer managers are async; server maintains `active_websockets` pool across multiple tabs.

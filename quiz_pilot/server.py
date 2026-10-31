@@ -26,7 +26,8 @@ app.add_middleware(
 
 HUD_PATH = Path(__file__).parent / "hud" / "hud.js"
 
-# Global state shared between active browser tab and agent
+# Global state shared between active browser tabs and agent
+active_websockets: List[WebSocket] = []
 active_browser_ws: Optional[WebSocket] = None
 latest_page_state: Dict[str, Any] = {
     "url": "",
@@ -51,7 +52,8 @@ def index():
     return {
         "status": "online",
         "service": "Quiz-Pilot Agent Bridge Server",
-        "browser_connected": active_browser_ws is not None,
+        "browser_connected": len(active_websockets) > 0,
+        "connected_tabs": len(active_websockets),
         "questions_count": len(latest_page_state.get("questions", [])),
         "url": latest_page_state.get("url", "")
     }
@@ -67,12 +69,14 @@ def get_hud_script():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """Live bidirectional channel with the browser tab."""
+    """Live bidirectional channel with browser tabs."""
     global active_browser_ws, latest_page_state
     await websocket.accept()
-    active_browser_ws = websocket
+    if websocket not in active_websockets:
+        active_websockets.append(websocket)
+    active_browser_ws = active_websockets[-1]
     latest_page_state["is_connected"] = True
-    print("\n[Quiz-Pilot Bridge] Browser tab connected via WebSocket!")
+    print(f"\n[Quiz-Pilot Bridge] Browser tab connected via WebSocket! (Active tabs: {len(active_websockets)})")
 
     try:
         while True:
@@ -90,12 +94,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         print("[Quiz-Pilot Bridge] Browser tab disconnected.")
-        active_browser_ws = None
-        latest_page_state["is_connected"] = False
     except Exception as e:
         print(f"[Quiz-Pilot Bridge] WebSocket error: {e}")
-        active_browser_ws = None
-        latest_page_state["is_connected"] = False
+    finally:
+        if websocket in active_websockets:
+            active_websockets.remove(websocket)
+        active_browser_ws = active_websockets[-1] if active_websockets else None
+        latest_page_state["is_connected"] = len(active_websockets) > 0
 
 
 # --- Agent Endpoints ---
@@ -104,7 +109,8 @@ async def websocket_endpoint(websocket: WebSocket):
 def get_agent_state():
     """Agent calls this to get currently visible questions on screen."""
     return {
-        "connected": active_browser_ws is not None,
+        "connected": len(active_websockets) > 0,
+        "connected_tabs": len(active_websockets),
         "url": latest_page_state.get("url", ""),
         "title": latest_page_state.get("title", ""),
         "questions": latest_page_state.get("questions", [])
@@ -114,10 +120,11 @@ def get_agent_state():
 @app.post("/api/agent/click")
 async def agent_click_option(req: ClickRequest):
     """Agent clicks a specific option."""
-    if not active_browser_ws:
+    ws = active_websockets[-1] if active_websockets else None
+    if not ws:
         raise HTTPException(status_code=503, detail="No browser tab connected via WebSocket.")
 
-    await active_browser_ws.send_text(json.dumps({
+    await ws.send_text(json.dumps({
         "type": "click_option",
         "q": req.q,
         "opt": req.opt
@@ -128,11 +135,12 @@ async def agent_click_option(req: ClickRequest):
 @app.post("/api/agent/solve-page")
 async def agent_solve_page(req: SolvePageRequest):
     """Agent sends answers for all questions on current page at once."""
-    if not active_browser_ws:
+    ws = active_websockets[-1] if active_websockets else None
+    if not ws:
         raise HTTPException(status_code=503, detail="No browser tab connected via WebSocket.")
 
     for item in req.answers:
-        await active_browser_ws.send_text(json.dumps({
+        await ws.send_text(json.dumps({
             "type": "click_option",
             "q": item.q,
             "opt": item.opt
@@ -141,7 +149,7 @@ async def agent_solve_page(req: SolvePageRequest):
 
     if req.click_next:
         await asyncio.sleep(0.5)
-        await active_browser_ws.send_text(json.dumps({"type": "click_next"}))
+        await ws.send_text(json.dumps({"type": "click_next"}))
 
     return {"status": "completed", "solved_count": len(req.answers), "next_clicked": req.click_next}
 
@@ -149,10 +157,11 @@ async def agent_solve_page(req: SolvePageRequest):
 @app.post("/api/agent/next")
 async def agent_click_next():
     """Agent advances to next question or page."""
-    if not active_browser_ws:
+    ws = active_websockets[-1] if active_websockets else None
+    if not ws:
         raise HTTPException(status_code=503, detail="No browser tab connected via WebSocket.")
 
-    await active_browser_ws.send_text(json.dumps({"type": "click_next"}))
+    await ws.send_text(json.dumps({"type": "click_next"}))
     return {"status": "sent", "action": "click_next"}
 
 

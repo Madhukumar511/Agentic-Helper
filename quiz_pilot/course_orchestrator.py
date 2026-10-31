@@ -130,10 +130,55 @@ class CourseOrchestrator:
 
                                     if parts_payload:
                                         sub_res = await direct_api.submit_answers(assessment_id, parts_payload)
-                                        if sub_res.get("success"):
+                                        if sub_res and sub_res.get("success"):
+                                            submission_id = (
+                                                sub_res.get("data", {}).get("id")
+                                                or sub_res.get("submission_id")
+                                                or sub_res.get("id")
+                                            )
+                                            score_pct = 100.0
+                                            passed = True
+                                            feedback_map = {}
+                                            if submission_id and hasattr(direct_api, "get_grade_feedback"):
+                                                try:
+                                                    grade_res = await direct_api.get_grade_feedback(submission_id)
+                                                    if grade_res and not grade_res.get("error"):
+                                                        if "score_pct" in grade_res:
+                                                            score_pct = float(grade_res["score_pct"])
+                                                        elif "score" in grade_res:
+                                                            score_pct = float(grade_res["score"])
+                                                        elif "overallScore" in grade_res:
+                                                            score_pct = float(grade_res["overallScore"])
+                                                        elif "fractionPassed" in grade_res:
+                                                            score_pct = float(grade_res["fractionPassed"]) * 100.0
+
+                                                        passed = grade_res.get("passed", score_pct >= 80.0)
+                                                        feedback_map = grade_res.get("feedback", {})
+                                                except Exception:
+                                                    pass
+
+                                            if not feedback_map:
+                                                feedback_map = {q["index"]: passed for q in api_questions}
+
+                                            try:
+                                                self.attempt_mgr.record_attempt(
+                                                    quiz_id=item_title,
+                                                    attempt_num=1,
+                                                    questions=api_questions,
+                                                    answers=api_answers,
+                                                    feedback=feedback_map,
+                                                    score_pct=score_pct,
+                                                    passed=passed,
+                                                    md_path="quiz_analysis.md"
+                                                )
+                                            except Exception:
+                                                pass
+
                                             item_res["status"] = "submitted_direct_api"
                                             item_res["assessment_id"] = assessment_id
                                             item_res["questions_solved"] = len(api_questions)
+                                            item_res["score_pct"] = score_pct
+                                            item_res["passed"] = passed
                                             return item_res
                 except Exception:
                     pass
@@ -177,15 +222,21 @@ class CourseOrchestrator:
         elif item_type == "peer_review":
             prm = PeerReviewManager(page=page)
             rev_res = prm.complete_peer_reviews(count=4)
+            if asyncio.iscoroutine(rev_res):
+                rev_res = await rev_res
             item_res["status"] = rev_res.get("status")
             item_res["reviews_done"] = rev_res.get("reviews_submitted")
 
         elif item_type == "peer":
             prm = PeerReviewManager(page=page)
             t_info = prm.detect_peer_task(item_url)
+            if asyncio.iscoroutine(t_info):
+                t_info = await t_info
             item_res["peer_mode"] = t_info.get("mode")
             if t_info.get("mode") == "review":
-                prm.complete_peer_reviews(count=4)
+                rev_res = prm.complete_peer_reviews(count=4)
+                if asyncio.iscoroutine(rev_res):
+                    await rev_res
                 item_res["status"] = "reviews_completed"
 
         return item_res
