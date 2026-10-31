@@ -294,10 +294,16 @@ def cmd_clean(args):
 
 
 def cmd_solve_all(args):
-    """Solves and submits all open assessment tabs in parallel."""
-    from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync
-    console.print(f"[bold cyan]🚀 Starting Concurrent Multi-Tab Scheduler (Max Concurrency: {args.concurrency})...[/bold cyan]")
-    res = solve_all_open_quizzes_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
+    """Solves and submits all open assessment tabs in parallel, or opens URLs and solves."""
+    from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync, open_and_solve_parallel_sync
+    urls = getattr(args, "urls", [])
+    if urls:
+        console.print(f"[bold cyan]🚀 Opening {len(urls)} URLs in background tabs and running parallel workers (Max Concurrency: {args.concurrency})...[/bold cyan]")
+        res = open_and_solve_parallel_sync(urls=urls, cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
+    else:
+        console.print(f"[bold cyan]🚀 Starting Concurrent Multi-Tab Scheduler across open tabs (Max Concurrency: {args.concurrency})...[/bold cyan]")
+        res = solve_all_open_quizzes_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
+
     console.print(f"[bold green]✓ Completed multi-tab run: {res.get('passed_count', 0)}/{res.get('total_tabs', 0)} passed.[/bold green]")
     for r in res.get("results", []):
         status_color = "green" if r.get("passed") else "yellow"
@@ -484,7 +490,8 @@ def main():
     p_clean.set_defaults(func=cmd_clean)
 
     # solve-all
-    p_sall = subparsers.add_parser("solve-all", aliases=["multiworker"], help="Concurrently solve all open assessment tabs")
+    p_sall = subparsers.add_parser("solve-all", aliases=["multiworker"], help="Concurrently solve open assessment tabs or open given URLs in parallel")
+    p_sall.add_argument("urls", nargs="*", help="Optional list of course/quiz URLs to open in tabs and solve")
     p_sall.add_argument("--concurrency", type=int, default=4, help="Max parallel workers")
     p_sall.add_argument("--port", type=int, default=9222)
     p_sall.set_defaults(func=cmd_solve_all)

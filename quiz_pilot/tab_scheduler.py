@@ -340,6 +340,56 @@ class AsyncTabScheduler:
                 "results": results
             }
 
+    async def open_and_solve_parallel(
+        self,
+        urls: List[str],
+        auto_submit: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Opens a list of assessment/course URLs into separate background tabs,
+        then processes and solves all of them concurrently.
+        """
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.connect_over_cdp(self.cdp_url)
+            except Exception as e:
+                return {"error": f"Failed to connect to browser on CDP {self.cdp_url}: {e}"}
+
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+
+            # Open all tabs
+            created_pages = []
+            for url in urls:
+                page = await context.new_page()
+                try:
+                    await page.evaluate("(u) => window.location.href = u", url)
+                except Exception:
+                    await page.goto(url, wait_until="commit")
+                created_pages.append(page)
+
+            # Allow pages to mount
+            await asyncio.sleep(4)
+
+            semaphore = asyncio.Semaphore(self.max_concurrency)
+            tasks = [
+                self._process_single_tab(
+                    page=tab,
+                    tab_index=idx,
+                    semaphore=semaphore,
+                    auto_submit=auto_submit
+                )
+                for idx, tab in enumerate(created_pages)
+            ]
+
+            results = await asyncio.gather(*tasks, return_exceptions=False)
+            passed_count = sum(1 for r in results if r.get("passed"))
+            return {
+                "total_tabs": len(created_pages),
+                "passed_count": passed_count,
+                "concurrency": self.max_concurrency,
+                "results": results
+            }
+
 
 def solve_all_open_quizzes_sync(
     cdp_url: str = "http://127.0.0.1:9222",
@@ -347,9 +397,23 @@ def solve_all_open_quizzes_sync(
     answer_generator: Optional[Callable] = None,
     auto_submit: bool = True
 ) -> Dict[str, Any]:
-    """Synchronous wrapper for running the AsyncTabScheduler."""
+    """Synchronous wrapper for running the AsyncTabScheduler on already open tabs."""
     scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=max_concurrency)
     return asyncio.run(scheduler.run_parallel_batch(
         answer_generator=answer_generator,
+        auto_submit=auto_submit
+    ))
+
+
+def open_and_solve_parallel_sync(
+    urls: List[str],
+    cdp_url: str = "http://127.0.0.1:9222",
+    max_concurrency: int = 4,
+    auto_submit: bool = True
+) -> Dict[str, Any]:
+    """Synchronous wrapper to open multiple URLs in tabs and solve them concurrently."""
+    scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=max_concurrency)
+    return asyncio.run(scheduler.open_and_solve_parallel(
+        urls=urls,
         auto_submit=auto_submit
     ))

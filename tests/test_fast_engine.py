@@ -30,3 +30,4 @@ def test_mcp_fast_tools_registered():
     tool_names = [t["name"] for t in TOOLS]
     assert "crawl_syllabus" in tool_names
     assert "auto_complete_entire_course" in tool_names
+    assert "open_and_solve_parallel" in tool_names

@@ -211,6 +211,36 @@ TOOLS = [
         }
     },
     {
+        "name": "open_and_solve_parallel",
+        "description": "Opens multiple course or assessment URLs into separate browser tabs and solves all of them concurrently in parallel.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of course, module, or assessment URLs to open in tabs"
+                },
+                "max_concurrency": {
+                    "type": "integer",
+                    "description": "Maximum number of parallel workers (default: 4)",
+                    "default": 4
+                },
+                "auto_submit": {
+                    "type": "boolean",
+                    "description": "Whether to automatically submit answers (default: true)",
+                    "default": True
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            },
+            "required": ["urls"]
+        }
+    },
+    {
         "name": "inspect_programming_task",
         "description": "Scrapes programming assignment instructions, starter code archive links (.zip, .py), upload inputs, and grading status.",
         "inputSchema": {
@@ -485,6 +515,14 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         auto_sub = arguments.get("auto_submit", True)
         scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=concurrency)
         batch_results = await scheduler.run_parallel_batch(auto_submit=auto_sub)
+        return {"content": [{"type": "text", "text": json.dumps(batch_results, indent=2)}]}
+
+    if name == "open_and_solve_parallel":
+        urls = arguments["urls"]
+        concurrency = int(arguments.get("max_concurrency", 4))
+        auto_sub = arguments.get("auto_submit", True)
+        scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=concurrency)
+        batch_results = await scheduler.open_and_solve_parallel(urls=urls, auto_submit=auto_sub)
         return {"content": [{"type": "text", "text": json.dumps(batch_results, indent=2)}]}
 
     if name == "inspect_programming_task":

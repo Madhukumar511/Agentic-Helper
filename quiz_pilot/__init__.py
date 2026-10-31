@@ -15,7 +15,7 @@ from .graph_solvers import ChandyLamportSolver, MulticastSimulator, LamportVecto
 from .diagram_parser import LocalDiagramParser
 from .attempt_protector import FastAttemptManager
 from .lms_adapters import get_lms_adapter
-from .tab_scheduler import AsyncTabScheduler, solve_all_open_quizzes_sync
+from .tab_scheduler import AsyncTabScheduler, solve_all_open_quizzes_sync, open_and_solve_parallel_sync
 from .programming_solver import (
     ProgrammingAssignmentManager,
     inspect_programming_task_sync,
@@ -43,6 +43,7 @@ __all__ = [
     "get_lms_adapter",
     "AsyncTabScheduler",
     "solve_all_open_quizzes_sync",
+    "open_and_solve_parallel_sync",
     "ProgrammingAssignmentManager",
     "inspect_programming_task_sync",
     "submit_code_file_sync",
