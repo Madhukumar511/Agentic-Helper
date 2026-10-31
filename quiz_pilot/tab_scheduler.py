@@ -115,46 +115,8 @@ class AsyncTabScheduler:
             try:
                 adapter = get_lms_adapter(page)
                 
-                # 1. Extract Questions
-                questions = await page.evaluate('''() => {
-                    let allGroups = Array.from(document.querySelectorAll('div[role="radiogroup"], div[role="group"]'));
-                    let leafGroups = allGroups.filter(g => !allGroups.some(other => other !== g && g.contains(other)));
-                    return leafGroups.map((g, idx) => {
-                        let p = g;
-                        while (p && !p.innerText.includes("Question") && p !== document.body) {
-                            p = p.parentElement;
-                        }
-                        let fullText = p ? p.innerText : g.innerText;
-                        fullText = fullText.replace(/You are a helpful AI assistant[\\s\\S]*?I understand/gi, '').replace(/\\s+/g, ' ').trim();
-                        
-                        const radios = Array.from(g.querySelectorAll('input[type="radio"], [role="radio"]'));
-                        const checkboxes = Array.from(g.querySelectorAll('input[type="checkbox"], [role="checkbox"]'));
-                        const select = g.querySelector('select');
-                        
-                        let qType = 'radio';
-                        if (select) qType = 'dropdown';
-                        else if (checkboxes.length > 0) qType = 'checkbox';
-                        
-                        let options = [];
-                        if (select) {
-                            options = Array.from(select.querySelectorAll('option')).map(o => o.innerText.trim()).filter(t => t.length > 0);
-                        } else {
-                            options = (radios.length > 0 ? radios : checkboxes).map(r => {
-                                const lbl = r.closest('label') || r.parentElement;
-                                let text = lbl ? lbl.innerText.replace(/\\s+/g, ' ').trim() : '';
-                                return text.replace(/You are a helpful AI assistant[\\s\\S]*?I understand/gi, '').trim();
-                            }).filter(t => t.length > 0);
-                        }
-                        
-                        return {
-                            index: idx,
-                            qNum: idx + 1,
-                            type: qType,
-                            prompt: fullText,
-                            options: options
-                        };
-                    });
-                }''')
+                # 1. Extract Questions via LMS Adapter
+                questions = await adapter.extract_questions_async()
                 
                 result["questions_count"] = len(questions)
                 if not questions:
@@ -168,127 +130,36 @@ class AsyncTabScheduler:
                 else:
                     answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=title)
 
-                # 3. Fill Answers in Tab DOM in a single atomic batch (<30ms)
-                payload = {str(k): v for k, v in answers.items()}
-                await page.evaluate('''([ansMap]) => {
-                    let norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-                    let allGroups = Array.from(document.querySelectorAll('div[role="radiogroup"], div[role="group"]'));
-                    let leafGroups = allGroups.filter(g => !allGroups.some(other => other !== g && g.contains(other)));
-                    
-                    for (let k of Object.keys(ansMap)) {
-                        let idx = parseInt(k, 10);
-                        let val = ansMap[k];
-                        if (idx >= leafGroups.length) continue;
-                        let g = leafGroups[idx];
-                        
-                        let radios = Array.from(g.querySelectorAll('input[type="radio"], [role="radio"]'));
-                        let checkboxes = Array.from(g.querySelectorAll('input[type="checkbox"], [role="checkbox"]'));
-                        let select = g.querySelector('select');
-                        
-                        if (select) {
-                            let options = Array.from(select.options);
-                            let targetIdx = typeof val === 'number' ? val : -1;
-                            if (typeof val === 'string') {
-                                let vNorm = norm(val);
-                                targetIdx = options.findIndex(o => norm(o.text).includes(vNorm) || norm(o.value).includes(vNorm));
-                            }
-                            if (targetIdx >= 0 && targetIdx < options.length) {
-                                select.selectedIndex = targetIdx;
-                                select.dispatchEvent(new Event('input', { bubbles: true }));
-                                select.dispatchEvent(new Event('change', { bubbles: true }));
-                            }
-                        } else if (radios.length > 0) {
-                            let targetIdx = typeof val === 'number' ? val : -1;
-                            if (typeof val === 'string') {
-                                let vNorm = norm(val);
-                                targetIdx = radios.findIndex(r => {
-                                    let l = r.closest('label') || r.parentElement;
-                                    return l && norm(l.innerText).includes(vNorm);
-                                });
-                            }
-                            if (targetIdx < 0 && typeof val === 'number' && val < radios.length) {
-                                targetIdx = val;
-                            }
-                            if (targetIdx >= 0 && targetIdx < radios.length) {
-                                radios[targetIdx].click();
-                            }
-                        } else if (checkboxes.length > 0) {
-                            let items = Array.isArray(val) ? val : [val];
-                            for (let item of items) {
-                                let targetIdx = typeof item === 'number' ? item : -1;
-                                if (typeof item === 'string') {
-                                    let iNorm = norm(item);
-                                    targetIdx = checkboxes.findIndex(cb => {
-                                        let l = cb.closest('label') || cb.parentElement;
-                                        return l && (norm(l.innerText).includes(iNorm) || iNorm.includes(norm(l.innerText)));
-                                    });
-                                }
-                                if (targetIdx >= 0 && targetIdx < checkboxes.length) {
-                                    let cb = checkboxes[targetIdx];
-                                    if (!cb.checked && cb.getAttribute('aria-checked') !== 'true') {
-                                        cb.click();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }''', [payload])
+                # 3. Fill Answers via LMS Adapter
+                if hasattr(adapter, "batch_fill_answers_async"):
+                    await adapter.batch_fill_answers_async(answers, auto_submit=auto_submit)
+                elif hasattr(adapter, "batch_fill_answers"):
+                    await adapter.batch_fill_answers(answers, auto_submit=auto_submit)
+                else:
+                    for q_idx, val in answers.items():
+                        await adapter.fill_answer_async(int(q_idx), val)
+                    if auto_submit:
+                        await adapter.submit_assessment_async()
 
-                # 4. Check Honor Code & Submit if requested
+                # 4. Handle Submission & Feedback
                 if auto_submit:
-                    # Check Honor code checkbox
-                    await page.evaluate('''() => {
-                        let cb = document.querySelector('#agreement-checkbox-base') || 
-                                 Array.from(document.querySelectorAll('input[type="checkbox"]')).find(c => {
-                                     let l = (c.closest('label') || {}).innerText || '';
-                                     return l.includes('understand and agree');
-                                 });
-                        if (cb && !cb.checked) cb.click();
-                    }''')
-                    await asyncio.sleep(0.3)
-
-                    # Click submit button
-                    await page.evaluate('''() => {
-                        let submitBtn = document.querySelector('button[data-testid="submit-button"]') ||
-                                        Array.from(document.querySelectorAll('button')).find(b => 
-                                            (b.innerText || '').trim().toLowerCase() === 'submit' && !b.disabled
-                                        );
-                        if (submitBtn) submitBtn.click();
-                    }''')
+                    result["submitted"] = True
                     await asyncio.sleep(0.5)
 
-                    # Click dialog confirmation if modal appears
-                    await page.evaluate('''() => {
-                        let submits = Array.from(document.querySelectorAll('button')).filter(b => 
-                            (b.innerText || '').trim().toLowerCase() === 'submit' && !b.disabled
-                        );
-                        if (submits.length > 1) {
-                            submits[submits.length - 1].click();
-                        }
-                    }''')
-                    await asyncio.sleep(1.0)
+                    try:
+                        fb = await adapter.extract_feedback_async()
+                    except Exception:
+                        fb = {}
 
-                    result["submitted"] = True
-
-                    # 5. Extract Feedback
-                    fb = await page.evaluate('''() => {
-                        let text = document.body.innerText;
-                        let scoreMatch = text.match(/(\\d+(?:\\.\\d+)?)%/);
-                        let score = scoreMatch ? parseFloat(scoreMatch[1]) : 0.0;
-                        let passedBadge = document.querySelector('[data-testid="passed-banner"], [aria-label*="Passed" i]');
-                        let hasPassText = /(?:congratulations|you passed)/i.test(text);
-                        return {
-                            score_pct: score,
-                            passed: passedBadge !== null || hasPassText || score >= 80.0
-                        };
-                    }''')
                     result["score_pct"] = fb.get("score_pct")
                     result["passed"] = fb.get("passed", False)
                     result["status"] = "PASSED" if result["passed"] else "COMPLETED"
 
-                    # 6. Record feedback and update quiz_analysis.md
+                    # 5. Record feedback and update memory
                     try:
-                        fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
+                        fb_map = fb.get("feedback")
+                        if fb_map is None:
+                            fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
                         self.attempt_mgr.record_attempt(
                             quiz_id=title,
                             attempt_num=1,
@@ -299,6 +170,8 @@ class AsyncTabScheduler:
                         )
                     except Exception:
                         pass
+                else:
+                    result["status"] = "ANSWERS_FILLED"
 
             except Exception as e:
                 logger.error(f"Error processing tab {tab_index} ({url}): {e}")

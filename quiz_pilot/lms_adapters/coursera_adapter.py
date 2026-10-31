@@ -9,6 +9,7 @@ Handles:
 """
 
 import time
+import asyncio
 from typing import List, Dict, Any
 from .base_adapter import BaseLMSAdapter
 
@@ -369,6 +370,70 @@ class CourseraAdapter(BaseLMSAdapter):
                 if (confirmBtn) confirmBtn.click();
             }
         }''')
+        return bool(clicked)
+
+    async def submit_assessment_async(self) -> bool:
+        """Atomic async submission: checks honor code, clicks submit, and confirms dialog without blocking event loop."""
+        clicked_res = self.page.evaluate('''() => {
+            // Dismiss any leftover warning modal
+            let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
+            if (cancelBtn) cancelBtn.click();
+
+            // 1. Check Honor Code agreement checkbox (#agreement-checkbox-base)
+            let cb = document.querySelector('#agreement-checkbox-base, input[name*="agreement" i]') ||
+                     Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).find(c => {
+                         let l = (c.closest('label') || c.parentElement || {}).innerText || '';
+                         return l.toLowerCase().includes('understand and agree') || l.toLowerCase().includes('honor code');
+                     });
+            if (cb && !cb.checked) {
+                let lbl = cb.closest('label') || cb.parentElement;
+                if (lbl) lbl.click();
+                else cb.click();
+                if (!cb.checked) {
+                    cb.checked = true;
+                    cb.dispatchEvent(new Event('change', { bubbles: true }));
+                    cb.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
+
+            // 2. Click Submit button
+            let submitBtn = document.querySelector('[data-testid="submit-button"], button.submit-button') ||
+                            Array.from(document.querySelectorAll('button')).find(b => 
+                                b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
+                            );
+            let didClick = false;
+            if (submitBtn) {
+                submitBtn.click();
+                didClick = true;
+            }
+
+            return didClick;
+        }''')
+        if asyncio.iscoroutine(clicked_res):
+            clicked = await clicked_res
+        else:
+            clicked = clicked_res
+
+        await asyncio.sleep(0.5)
+
+        confirm_res = self.page.evaluate('''() => {
+            let dialogBtn = document.querySelector('[data-testid="dialog-submit-button"]');
+            if (dialogBtn) {
+                dialogBtn.click();
+                return;
+            }
+            let dialog = document.querySelector('div[role="dialog"], [data-testid="assignment-view-tunnel-vision"]');
+            if (dialog) {
+                let confirmBtn = Array.from(dialog.querySelectorAll('button')).find(b => {
+                    let t = b.innerText.trim().toLowerCase();
+                    return t === 'submit' || t === 'continue' || t === 'yes';
+                });
+                if (confirmBtn) confirmBtn.click();
+            }
+        }''')
+        if asyncio.iscoroutine(confirm_res):
+            await confirm_res
+
         return bool(clicked)
 
     def extract_feedback(self) -> Dict[str, Any]:

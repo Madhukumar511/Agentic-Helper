@@ -172,15 +172,64 @@ class PeerReviewManager:
             clicked_count = self.page.evaluate("""() => {
                 const map = {};
                 document.querySelectorAll("input[type=radio]").forEach(r => {
-                    if (!map[r.name]) map[r.name] = [];
-                    map[r.name].push(r);
+                    const name = r.name || r.getAttribute('data-group') || 'default';
+                    if (!map[name]) map[name] = [];
+                    map[name].push(r);
                 });
                 let count = 0;
                 for (const name in map) {
                     const radios = map[name];
-                    const best = radios[radios.length - 1];
-                    best.click();
-                    count++;
+                    if (!radios.length) continue;
+                    
+                    let bestRadio = radios[0];
+                    let maxPoints = -Infinity;
+                    
+                    radios.forEach((r, idx) => {
+                        let pts = null;
+                        
+                        // 1. Check data attributes & value
+                        const attrCandidates = [
+                            r.getAttribute('data-score'),
+                            r.getAttribute('data-points'),
+                            r.getAttribute('data-value'),
+                            r.value
+                        ];
+                        for (const attr of attrCandidates) {
+                            if (attr !== null && attr !== undefined && !isNaN(parseFloat(attr))) {
+                                pts = parseFloat(attr);
+                                break;
+                            }
+                        }
+                        
+                        // 2. Check label text and aria attributes for point patterns e.g. "3 points", "(3 pts)"
+                        const lbl = r.closest('label') || 
+                                    (r.id ? document.querySelector(`label[for="${r.id}"]`) : null) || 
+                                    r.parentElement;
+                        const labelText = lbl ? (lbl.innerText || lbl.textContent || '') : '';
+                        const ariaText = r.getAttribute('aria-label') || '';
+                        const fullText = `${labelText} ${ariaText}`;
+                        
+                        const ptMatch = fullText.match(/\\b(\\d+(?:\\.\\d+)?)\\s*(?:points?|pts?|marks?)\\b/i) ||
+                                        fullText.match(/(?:score|points|pts|grade)\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)/i) ||
+                                        fullText.match(/\\((\\d+(?:\\.\\d+)?)\\s*(?:points?|pts?)?\\)/i);
+                        if (ptMatch) {
+                            pts = parseFloat(ptMatch[1]);
+                        }
+                        
+                        // 3. Fallback: if no numeric points discovered, assume standard order
+                        const effectiveScore = (pts !== null && !isNaN(pts)) ? pts : idx;
+                        
+                        if (effectiveScore > maxPoints) {
+                            maxPoints = effectiveScore;
+                            bestRadio = r;
+                        }
+                    });
+                    
+                    if (bestRadio) {
+                        bestRadio.click();
+                        bestRadio.dispatchEvent(new Event('change', { bubbles: true }));
+                        count++;
+                    }
                 }
                 return count;
             }""")

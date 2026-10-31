@@ -138,7 +138,8 @@ TOOLS = [
                 "answers": {"type": "object", "description": "Map of question index to submitted answer"},
                 "feedback": {"type": "object", "description": "Map of question index to boolean correctness (True/False)"},
                 "score_pct": {"type": "number", "description": "Final score percentage (0-100)"},
-                "attempt_num": {"type": "integer", "description": "Attempt sequence number (default: 1)", "default": 1}
+                "attempt_num": {"type": "integer", "description": "Attempt sequence number (default: 1)", "default": 1},
+                "md_path": {"type": "string", "description": "Optional markdown export file path"}
             },
             "required": ["questions", "answers", "feedback"]
         }
@@ -150,7 +151,8 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "questions": {"type": "array", "description": "List of current question objects on screen"},
-                "quiz_id": {"type": "string", "description": "Optional assessment identifier or title"}
+                "quiz_id": {"type": "string", "description": "Optional assessment identifier or title"},
+                "md_path": {"type": "string", "description": "Optional markdown export file path"}
             },
             "required": ["questions"]
         }
@@ -580,6 +582,32 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             solved = diagram_parser.solve_fast_lamport(parsed)
             return {"content": [{"type": "text", "text": json.dumps({"parsed": parsed, "solution": solved}, indent=2)}]}
 
+    if name == "record_quiz_analysis":
+        qid = arguments.get("quiz_id", "assessment")
+        qs = arguments.get("questions", [])
+        ans = arguments.get("answers", {})
+        fb = arguments.get("feedback", {})
+        score = arguments.get("score_pct")
+        att = arguments.get("attempt_num", 1)
+        md_path = arguments.get("md_path", "quiz_analysis.md")
+        md = attempt_mgr.record_attempt(
+            quiz_id=qid,
+            attempt_num=att,
+            questions=qs,
+            answers=ans,
+            feedback=fb,
+            score_pct=score,
+            md_path=md_path
+        )
+        return {"content": [{"type": "text", "text": md}]}
+
+    if name == "get_retry_answers":
+        qs = arguments.get("questions", [])
+        qid = arguments.get("quiz_id")
+        md_path = arguments.get("md_path", "quiz_analysis.md")
+        answers = attempt_mgr.get_retry_answers(questions=qs, quiz_id=qid, md_path=md_path)
+        return {"content": [{"type": "text", "text": json.dumps(answers, indent=2)}]}
+
     if name == "inspect_all_tabs":
         scheduler = AsyncTabScheduler(cdp_url=cdp_url)
         tabs = await scheduler.inspect_all_tabs()
@@ -671,7 +699,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
 
             else:
                 adapter = get_lms_adapter(page)
-                questions = adapter.extract_questions()
+                questions = await adapter.extract_questions_async()
                 return {"content": [{"type": "text", "text": json.dumps({"type": "quiz", "questions_count": len(questions), "sample": questions[:2]}, indent=2)}]}
 
     if name == "crawl_syllabus":
@@ -719,26 +747,28 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         adapter = get_lms_adapter(page)
 
         if name == "extract_questions":
-            questions = adapter.extract_questions()
+            questions = await adapter.extract_questions_async()
             return {"content": [{"type": "text", "text": json.dumps(questions, indent=2)}]}
 
         elif name == "fill_answer":
             idx = arguments["question_index"]
             val = arguments["value"]
-            ok = adapter.fill_answer(idx, val)
+            ok = await adapter.fill_answer_async(idx, val)
             return {"content": [{"type": "text", "text": json.dumps({"question_index": idx, "success": ok})}]}
 
         elif name == "solve_batch":
             answers = arguments["answers"]
             auto_sub = arguments.get("auto_submit", False)
-            if hasattr(adapter, "batch_fill_answers"):
+            if hasattr(adapter, "batch_fill_answers_async"):
+                results = await adapter.batch_fill_answers_async(answers, auto_submit=auto_sub)
+            elif hasattr(adapter, "batch_fill_answers"):
                 results = adapter.batch_fill_answers(answers, auto_submit=auto_sub)
             else:
                 results = {}
                 for q_idx, val in answers.items():
-                    results[str(q_idx)] = adapter.fill_answer(int(q_idx), val)
+                    results[str(q_idx)] = await adapter.fill_answer_async(int(q_idx), val)
                 if auto_sub:
-                    adapter.submit_assessment()
+                    await adapter.submit_assessment_async()
             return {"content": [{"type": "text", "text": json.dumps(results, indent=2)}]}
 
         elif name == "submit_assessment":
@@ -749,35 +779,12 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
                 if not allowed:
                     return {"isError": True, "content": [{"type": "text", "text": reason}]}
             
-            submitted = adapter.submit_assessment()
+            submitted = await adapter.submit_assessment_async()
             return {"content": [{"type": "text", "text": json.dumps({"submitted": submitted})}]}
 
         elif name == "get_feedback":
-            fb = adapter.extract_feedback()
+            fb = await adapter.extract_feedback_async()
             return {"content": [{"type": "text", "text": json.dumps(fb, indent=2)}]}
-
-        elif name == "record_quiz_analysis":
-            qid = tool_args.get("quiz_id", "assessment")
-            qs = tool_args.get("questions", [])
-            ans = tool_args.get("answers", {})
-            fb = tool_args.get("feedback", {})
-            score = tool_args.get("score_pct")
-            att = tool_args.get("attempt_num", 1)
-            md = attempt_mgr.record_attempt(
-                quiz_id=qid,
-                attempt_num=att,
-                questions=qs,
-                answers=ans,
-                feedback=fb,
-                score_pct=score
-            )
-            return {"content": [{"type": "text", "text": md}]}
-
-        elif name == "get_retry_answers":
-            qs = tool_args.get("questions", [])
-            qid = tool_args.get("quiz_id")
-            answers = attempt_mgr.get_retry_answers(questions=qs, quiz_id=qid)
-            return {"content": [{"type": "text", "text": json.dumps(answers, indent=2)}]}
 
     return {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 

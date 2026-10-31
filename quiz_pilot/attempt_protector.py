@@ -50,6 +50,12 @@ class FastAttemptManager:
         page_or_element.screenshot(path=path)
         return path
 
+    def _get_opt_text(self, opt: Any) -> str:
+        """Extracts plain text representation from either a string or option dict."""
+        if isinstance(opt, dict):
+            return str(opt.get("text") or opt.get("label") or opt.get("val") or opt.get("name") or "")
+        return str(opt) if opt is not None else ""
+
     def _get_q_fingerprint(self, question: Dict) -> str:
         """
         Computes a collision-resistant fingerprint for a question using:
@@ -58,10 +64,10 @@ class FastAttemptManager:
         3. Question type.
         Eliminates collisions even in randomized question pools with identical intro text.
         """
-        prompt = question.get("prompt", "").strip()
-        norm_prompt = " ".join(prompt.split())
+        prompt = question.get("prompt") or question.get("text") or ""
+        norm_prompt = " ".join(str(prompt).strip().split())
         options = question.get("options", [])
-        norm_opts = "|".join(sorted([" ".join(str(opt).split()) for opt in options]))
+        norm_opts = "|".join(sorted([" ".join(self._get_opt_text(opt).split()) for opt in options]))
         q_type = str(question.get("type", ""))
         content = f"{q_type}::{norm_prompt}::options::{norm_opts}"
         return hashlib.sha256(content.encode("utf-8")).hexdigest()[:24]
@@ -157,23 +163,26 @@ class FastAttemptManager:
         s = re.sub(r'\s+', ' ', s).strip().lower()
         return s
 
-    def _match_option_by_text(self, target_text: str, options: List[str]) -> Optional[int]:
+    def _match_option_by_text(self, target_text: str, options: List[Any]) -> Optional[int]:
         if not target_text or not options:
             return None
         norm_target = self._normalize_text(target_text)
         # 1. Exact match
         for i, opt in enumerate(options):
-            if self._normalize_text(opt) == norm_target:
+            opt_text = self._get_opt_text(opt)
+            if self._normalize_text(opt_text) == norm_target:
                 return i
         # 2. Substring / containment match
         for i, opt in enumerate(options):
-            norm_opt = self._normalize_text(opt)
+            norm_opt = self._normalize_text(self._get_opt_text(opt))
             if (norm_target and norm_target in norm_opt) or (norm_opt and norm_opt in norm_target):
                 return i
         return None
 
-    def _is_option_eliminated(self, opt_text: str, eliminated_texts: List[str]) -> bool:
-        norm_opt = self._normalize_text(opt_text)
+    def _is_option_eliminated(self, opt_text: Any, eliminated_texts: List[str]) -> bool:
+        norm_opt = self._normalize_text(self._get_opt_text(opt_text))
+        if not norm_opt:
+            return False
         for elim in eliminated_texts:
             norm_elim = self._normalize_text(elim)
             if norm_opt == norm_elim or (norm_elim and norm_elim in norm_opt) or (norm_opt and norm_opt in norm_elim):
@@ -252,11 +261,14 @@ class FastAttemptManager:
 
             sub_text = ""
             if isinstance(sub_val, int) and 0 <= sub_val < len(options):
-                sub_text = str(options[sub_val])
+                sub_text = self._get_opt_text(options[sub_val])
             elif isinstance(sub_val, list):
-                sub_text = ", ".join([str(options[i]) if isinstance(i, int) and 0 <= i < len(options) else str(i) for i in sub_val])
+                sub_text = ", ".join([
+                    self._get_opt_text(options[i]) if isinstance(i, int) and 0 <= i < len(options) else self._get_opt_text(i)
+                    for i in sub_val
+                ])
             elif sub_val is not None:
-                sub_text = str(sub_val)
+                sub_text = self._get_opt_text(sub_val)
 
             # Determine feedback
             fb_val = feedback.get(idx)
@@ -289,7 +301,7 @@ class FastAttemptManager:
 
                     # Compute remaining candidate options (excluding eliminated)
                     rem_candidates = [
-                        opt for opt in options
+                        self._get_opt_text(opt) for opt in options
                         if not self._is_option_eliminated(opt, entry["eliminated_texts"])
                     ]
                     entry["next_candidate"] = rem_candidates[0] if rem_candidates else None
@@ -362,7 +374,7 @@ class FastAttemptManager:
                         chosen_idx = None
                         if next_cand:
                             for vi in valid_indices:
-                                if self._normalize_text(options[vi]) == self._normalize_text(next_cand):
+                                if self._normalize_text(self._get_opt_text(options[vi])) == self._normalize_text(next_cand):
                                     chosen_idx = vi
                                     break
                         if chosen_idx is None:
@@ -469,7 +481,7 @@ class FastAttemptManager:
                     lines.append("  - *(None yet)*")
 
                 remaining = [
-                    opt for opt in item.get("options", [])
+                    self._get_opt_text(opt) for opt in item.get("options", [])
                     if not self._is_option_eliminated(opt, eliminated)
                 ]
                 lines.append(f"- **Remaining Candidate Options**:")
@@ -494,11 +506,6 @@ class FastAttemptManager:
         if cache_path not in target_paths:
             target_paths.append(cache_path)
 
-        conv_id = "17c215f3-4a51-44c4-bc49-b62ee3843b5d"
-        brain_path = os.path.expanduser(f"~/.gemini-account2/.gemini/antigravity-cli/brain/{conv_id}/quiz_analysis.md")
-        if brain_path not in target_paths:
-            target_paths.append(brain_path)
-
         for p in target_paths:
             try:
                 os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -520,7 +527,6 @@ class FastAttemptManager:
         """
         search_paths = [
             os.path.abspath(md_path),
-            os.path.expanduser("~/.gemini-account2/.gemini/antigravity-cli/brain/17c215f3-4a51-44c4-bc49-b62ee3843b5d/quiz_analysis.md"),
             os.path.join(self.base_cache_dir, "quiz_analysis.md")
         ]
 

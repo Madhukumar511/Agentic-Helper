@@ -7,6 +7,7 @@ Combines all 4 Performance Optimizations:
 4. Context-Isolated Execution State (Keeps LLM memory lightweight and fast)
 """
 
+import os
 import time
 import asyncio
 from typing import Dict, Any, List, Optional
@@ -28,7 +29,12 @@ class CourseOrchestrator:
         self.max_concurrency = max_concurrency
         self.attempt_mgr = FastAttemptManager()
 
-    async def _solve_item_on_page(self, page, item: Dict[str, Any]) -> Dict[str, Any]:
+    async def _solve_item_on_page(
+        self,
+        page,
+        item: Dict[str, Any],
+        direct_api: Optional[CourseraDirectAPI] = None
+    ) -> Dict[str, Any]:
         """Solves a single quiz, peer review, or assignment on the specified page/tab."""
         item_title = item.get("title", "")
         item_url = item.get("url", "")
@@ -60,26 +66,56 @@ class CourseOrchestrator:
         }
 
         if item_type == "quiz":
+            # 1. Direct REST/GraphQL API attempt if configured
+            if direct_api:
+                try:
+                    assessment_id = await page.evaluate(r'''() => {
+                        if (window.__APOLLO_STATE__) {
+                            for (let k of Object.keys(window.__APOLLO_STATE__)) {
+                                if (k.startsWith("OnDemandAssessment:") || k.includes("Assessment:")) {
+                                    let id = window.__APOLLO_STATE__[k].id || (k.includes(":") ? k.split(":")[1] : null);
+                                    if (id) return id;
+                                }
+                            }
+                        }
+                        let m = window.location.pathname.match(/(?:assignment-submission|exam|quiz)\/([a-zA-Z0-9_-]+)/);
+                        return m ? m[1] : null;
+                    }''')
+                    if assessment_id:
+                        api_data = await direct_api.fetch_assessment(assessment_id)
+                        if api_data and not api_data.get("error"):
+                            sub_res = await direct_api.submit_answers(assessment_id, {})
+                            if sub_res.get("success"):
+                                item_res["status"] = "submitted_direct_api"
+                                item_res["assessment_id"] = assessment_id
+                                return item_res
+                except Exception:
+                    pass
+
+            # 2. DOM-based execution fallback via unified async LMS adapter
             adapter = get_lms_adapter(page)
-            questions = adapter.extract_questions()
+            questions = await adapter.extract_questions_async()
             if questions:
                 answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=item_title)
-                if hasattr(adapter, "batch_fill_answers"):
-                    adapter.batch_fill_answers(answers, auto_submit=True)
+                if hasattr(adapter, "batch_fill_answers_async"):
+                    await adapter.batch_fill_answers_async(answers, auto_submit=True)
+                elif hasattr(adapter, "batch_fill_answers"):
+                    await adapter.batch_fill_answers(answers, auto_submit=True)
                 else:
                     for q in questions:
-                        adapter.fill_answer(q["index"], answers.get(q["index"], 0))
-                    adapter.submit_assessment()
+                        await adapter.fill_answer_async(q["index"], answers.get(q["index"], 0))
+                    await adapter.submit_assessment_async()
                 
                 try:
-                    fb = adapter.extract_feedback()
+                    fb = await adapter.extract_feedback_async()
                     self.attempt_mgr.record_attempt(
                         quiz_id=item_title,
                         attempt_num=1,
                         questions=questions,
                         answers=answers,
                         feedback=fb.get("feedback", {}),
-                        score_pct=fb.get("score_pct")
+                        score_pct=fb.get("score_pct"),
+                        md_path=os.path.join(self.attempt_mgr.base_cache_dir, "quiz_analysis.md")
                     )
                     item_res["score_pct"] = fb.get("score_pct")
                     item_res["passed"] = fb.get("passed", False)
@@ -146,7 +182,7 @@ class CourseOrchestrator:
             num_workers = min(self.max_concurrency, len(pending_items))
             if num_workers <= 1:
                 for item in pending_items:
-                    res = await self._solve_item_on_page(page, item)
+                    res = await self._solve_item_on_page(page, item, direct_api=direct_api)
                     results.append(res)
             else:
                 worker_pages = [page]
@@ -165,7 +201,7 @@ class CourseOrchestrator:
                             it = queue.get_nowait()
                         except asyncio.QueueEmpty:
                             break
-                        res = await self._solve_item_on_page(w_page, it)
+                        res = await self._solve_item_on_page(w_page, it, direct_api=direct_api)
                         w_res.append(res)
                         queue.task_done()
                     return w_res

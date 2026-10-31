@@ -7,6 +7,7 @@ or local Agent Bridge pairing.
 import os
 import re
 import json
+import tempfile
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -49,7 +50,16 @@ class AISolver:
         if not options:
             return {"selected_indices": [], "confidence": 0.0, "explanation": "No options provided."}
 
-        formatted_options = "\n".join([f"[{opt['index']}] {opt['text']}" for opt in options])
+        formatted_opts = []
+        for i, opt in enumerate(options):
+            if isinstance(opt, dict):
+                idx = opt.get("index", i)
+                txt = opt.get("text", "")
+            else:
+                idx = i
+                txt = str(opt)
+            formatted_opts.append(f"[{idx}] {txt}")
+        formatted_options = "\n".join(formatted_opts)
 
         prompt = f"""You are an expert academic tutor answering quiz questions with maximum accuracy.
 Analyze the following question and options carefully:
@@ -103,7 +113,7 @@ Return ONLY valid JSON matching this schema:
                 logger.error(f"OpenAI/Ollama error: {e}")
 
         # 3. Agent Bridge / Shared State Mode
-        bridge_file = "/tmp/quiz_pilot_bridge.json"
+        bridge_file = os.path.join(tempfile.gettempdir(), "quiz_pilot_bridge.json")
         logger.info(f"Writing question to bridge file for agent review: {bridge_file}")
         with open(bridge_file, "w") as f:
             json.dump({

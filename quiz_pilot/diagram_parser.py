@@ -340,41 +340,81 @@ class LocalDiagramParser:
 
         # 2. Spacetime / Lamport Clocks / Vector Clocks
         if "lamport" in prompt_norm or "vector clock" in prompt_norm or "logical clock" in prompt_norm or "consistent cut" in prompt_norm:
-            # If spacetime diagram exists, parse it
+            # If spacetime diagram exists, parse it analytically
             parsed = None
             if image_source:
                 try:
                     parsed = self.parse_spacetime_diagram(image_source)
                 except Exception:
-                    pass
+                    parsed = None
 
-            if "vector clock" in prompt_norm:
-                # Look for tuple pattern in options: e.g. (1, 0, 0) or (2, 1, 0)
-                tuple_opts = [(idx, opt) for idx, opt in enumerate(options_norm) if "(" in opt and ")" in opt]
-                if tuple_opts:
-                    # Pick the vector with monotonically increasing values matching causality
+            # Attempt analytical topological solution if parsed diagram is available
+            if parsed and parsed.get("total_events", 0) > 0:
+                if "vector clock" in prompt_norm:
+                    vc_data = self.solve_fast_vector_clock(parsed)
+                    vectors = vc_data.get("vector_clocks", {})
+                    # Check if prompt specifies an event (e.g., event 2, e_1, e2)
+                    ev_match = re.search(r'\b(?:event|e)\s*[:_-]?\s*(\d+)\b', prompt_norm)
+                    target_ev = int(ev_match.group(1)) if ev_match else None
+                    candidate_vectors = [vectors[target_ev]] if (target_ev is not None and target_ev in vectors) else list(vectors.values())
+                    for v in candidate_vectors:
+                        v_str = ",".join(map(str, v))
+                        v_spaced = ", ".join(map(str, v))
+                        for idx, opt in enumerate(options_norm):
+                            clean_opt = opt.replace(" ", "").replace("(", "").replace(")", "").replace("[", "").replace("]", "")
+                            if v_str in clean_opt:
+                                return {
+                                    "success": True,
+                                    "selected_index": idx,
+                                    "selected_option": options[idx],
+                                    "confidence": 0.95,
+                                    "domain": "vector_clock",
+                                    "reasoning": f"Analytically matched topological vector clock ({v_spaced}) from spacetime diagram",
+                                    "execution_time_ms": int((time.time() - t0) * 1000)
+                                }
+                elif "lamport" in prompt_norm or "logical clock" in prompt_norm:
+                    lamp_data = self.solve_fast_lamport(parsed)
+                    ts_map = lamp_data.get("timestamps", {})
+                    ev_match = re.search(r'\b(?:event|e)\s*[:_-]?\s*(\d+)\b', prompt_norm)
+                    target_ev = int(ev_match.group(1)) if ev_match else None
+                    candidate_ts = [ts_map[target_ev]] if (target_ev is not None and target_ev in ts_map) else list(ts_map.values())
+                    for ts in candidate_ts:
+                        for idx, opt in enumerate(options_norm):
+                            if str(ts) == opt.strip():
+                                return {
+                                    "success": True,
+                                    "selected_index": idx,
+                                    "selected_option": options[idx],
+                                    "confidence": 0.95,
+                                    "domain": "lamport_clock",
+                                    "reasoning": f"Analytically matched Lamport timestamp {ts} from spacetime diagram",
+                                    "execution_time_ms": int((time.time() - t0) * 1000)
+                                }
+
+            # Fall back to LLM reasoning if analytical topological parsing fails or cannot resolve option
+            try:
+                from quiz_pilot.ai_solver import AISolver
+                solver = AISolver()
+                ai_q = {
+                    "text": question_prompt,
+                    "type": "multiple_choice" if q_type == "checkbox" else "single_choice",
+                    "options": options
+                }
+                ai_sol = solver.solve_question(ai_q)
+                selected = ai_sol.get("selected_indices", [])
+                if selected and isinstance(selected[0], int) and selected[0] < len(options):
+                    idx = selected[0]
                     return {
                         "success": True,
-                        "selected_index": tuple_opts[0][0],
-                        "selected_option": options[tuple_opts[0][0]],
-                        "confidence": 0.95,
-                        "domain": "vector_clock",
-                        "reasoning": "Selected causal vector clock tuple matching spacetime events",
+                        "selected_index": idx,
+                        "selected_option": options[idx],
+                        "confidence": ai_sol.get("confidence", 0.9),
+                        "domain": "llm_fallback",
+                        "reasoning": f"Topological parsing fell back to LLM reasoning: {ai_sol.get('explanation', '')}",
                         "execution_time_ms": int((time.time() - t0) * 1000)
                     }
-
-            if "consistent cut" in prompt_norm:
-                for idx, opt in enumerate(options_norm):
-                    if "consistent" in opt.lower() and "inconsistent" not in opt.lower():
-                        return {
-                            "success": True,
-                            "selected_index": idx,
-                            "selected_option": options[idx],
-                            "confidence": 0.92,
-                            "domain": "consistent_cut",
-                            "reasoning": "Consistent cut contains send events for all delivered messages",
-                            "execution_time_ms": int((time.time() - t0) * 1000)
-                        }
+            except Exception:
+                pass
 
         # 3. Clos Networks
         if "clos" in prompt_norm:
