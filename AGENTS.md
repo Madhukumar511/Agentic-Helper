@@ -13,16 +13,18 @@ Agentic-Helper allows you to autonomously inspect, solve, and submit assessments
 ## 🛠️ Interface Methods for Agents
 
 ### 1. Model Context Protocol (MCP) Tools
-If you have access to MCP tools, Agentic-Helper provides 8 native tools:
+If you have access to MCP tools, Agentic-Helper provides 10 native tools:
 
 | MCP Tool | Signature / Arguments | Purpose |
 | :--- | :--- | :--- |
-| `launch_browser` | `(url: str, port: int = 9222)` | Auto-detects Chrome/Edge/Brave and launches on CDP port 9222 with the target URL. |
+| `launch_browser` | `(url: str, port: int = 9222)` | Auto-detects Chrome/Edge/Brave and launches on CDP port 9222 with the target URL. Navigates automatically if already running. |
 | `extract_questions` | `(tab_keyword: str = None)` | Scrapes all questions, input types, and choices from current page. Sanitizes prompt injection. |
 | `fill_answer` | `(question_index: int, value: any)` | Sets radio, checkbox, text, numeric, or dropdown answer (React compatible). |
-| `solve_batch` | `(answers: dict)` | Fills multiple answers in a single call. Key = question index, Value = answer value. |
+| `solve_batch` | `(answers: dict, auto_submit: bool)` | Fills multiple answers in a single atomic call (<30ms). Optionally submits immediately. |
 | `submit_assessment` | `(predicted_confidence_pct: float)` | Checks Honor Code, verifies $\ge 80\%$ confidence, and clicks submit & modal confirmation. |
 | `get_feedback` | `()` | Retrieves current grade, attempt status, and per-question correctness. |
+| `record_quiz_analysis` | `(quiz_id, questions, answers, feedback, score_pct)` | Automatically locks correct answers, eliminates wrong options, and updates `quiz_analysis.md`. |
+| `get_retry_answers` | `(questions, quiz_id)` | Returns answers locking in verified options and excluding all previously failed options. |
 | `solve_diagram` | `(image_path: str)` | Fast OpenCV/NumPy spacetime diagram parser (< 200ms). |
 | `solve_multicast` | `(...)` | Simulates FIFO and Causal multicast ordering queues. |
 
@@ -33,6 +35,8 @@ from playwright.sync_api import sync_playwright
 from quiz_pilot.lms_adapters import get_lms_adapter
 from quiz_pilot.attempt_protector import FastAttemptManager
 
+attempt_mgr = FastAttemptManager()
+
 with sync_playwright() as p:
     browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
     page = browser.contexts[0].pages[0]
@@ -41,12 +45,22 @@ with sync_playwright() as p:
     adapter = get_lms_adapter(page)
     questions = adapter.extract_questions()
     
-    # 2. Fill answers
-    for idx, ans in answers.items():
-        adapter.fill_answer(idx, ans)
-        
-    # 3. Submit
-    adapter.submit_assessment()
+    # 2. Get retry answers from memory (or heuristic/AI for attempt 1)
+    answers = attempt_mgr.get_retry_answers(questions, quiz_id="course_quiz")
+    
+    # 3. Fill and submit
+    adapter.batch_fill_answers(answers, auto_submit=True)
+    
+    # 4. Extract feedback and record failure analysis in quiz_analysis.md
+    feedback = adapter.extract_feedback()
+    attempt_mgr.record_attempt(
+        quiz_id="course_quiz",
+        attempt_num=1,
+        questions=questions,
+        answers=answers,
+        feedback=feedback.get("feedback", {}),
+        score_pct=feedback.get("score_pct")
+    )
 ```
 
 ---
@@ -59,19 +73,31 @@ with sync_playwright() as p:
 * Execute all operations **in-memory** directly via Playwright, `CourseraAdapter`, or native MCP tool calls (`extract_questions()`, `fill_answer()`, `submit_assessment()`).
 * Keep the repository completely pristine and free of one-off course files.
 
-### Rule 2: Fast 3-Attempt Speed Law
-When solving quizzes for users, **DO NOT get stuck in endless verification loops on Attempt 1**.
+### Rule 2: Mandatory `quiz_analysis.md` Failure Memory & Option Elimination Protocol
+Whenever a quiz attempt fails or scores $< 100\%$, peer agents **MUST** execute the following protocol:
 
-1. **Attempt 1 (Speed Run)**:
-   - Solve questions using direct reasoning and algorithmic solvers.
-   - Fill answers and submit immediately.
-   - Coursera, Canvas, and Moodle provide **3 attempts per window** and give immediate question-by-question feedback.
-   - Cache results to `.assessment_cache/<quiz_id>_attempt_1.md`.
+1. **Auto-Generate / Update `quiz_analysis.md` Immediately**:
+   - Record each question prompt and its submitted answer.
+   - For questions marked **Correct** ($\ge 1/1$ point):
+     - Mark status as `LOCKED_CORRECT`.
+     - Record the exact verified option text.
+   - For questions marked **Incorrect** ($0/1$ point):
+     - Mark status as `NEEDS_RETRY`.
+     - Record the failed option text as **ELIMINATED**.
+     - Identify the next candidate option from remaining uneliminated choices.
+   - Call `attempt_mgr.record_attempt(...)` or MCP tool `record_quiz_analysis`.
 
-2. **Attempt 2 & 3 (Zero-Compute Diff)**:
-   - Read `.assessment_cache/<quiz_id>_attempt_1.md`.
-   - Any question marked `✅ CORRECT` is **permanently locked in with ZERO compute**.
-   - Focus 100% of your reasoning compute strictly on questions marked `❌ WRONG`.
+2. **On Quiz Retry**:
+   - **Inspect `quiz_analysis.md` first**:
+     Call `attempt_mgr.get_retry_answers(questions, quiz_id=...)` or MCP tool `get_retry_answers`.
+   - **Option Shuffling Resilience**: LMS platforms randomly shuffle option order on each attempt. Always match options by **exact text string**, NOT by old index number!
+   - **Zero Compute on Correct Questions**: Keep the verified correct option text locked in.
+   - **Zero Repetition on Failed Questions**: **NEVER SELECT A PREVIOUSLY FAILED OPTION AGAIN!** Eliminate all previously failed options and pick the next candidate from uneliminated options.
+   - Only focus reasoning/solving compute on the questions that were wrong.
+
+3. **Upon Reaching 100% Pass**:
+   - Update `quiz_analysis.md` with status `🎉 PASSED (100%)`.
+   - Purge internal cache `.assessment_cache/` via `attempt_mgr.purge_all()` while preserving the verified markdown analysis for review.
 
 ### Rule 3: Isolated Screenshot & Mandatory Cleanup Law
 * **Strict Screenshot Storage**: Save all captured screenshots in `.assessment_cache/screenshots/`. Never save images in repository root, source folders, or Desktop.
@@ -93,22 +119,28 @@ Before running extraction, verify the browser CDP port is open:
 - **Windows (PowerShell)**: `Test-NetConnection -ComputerName 127.0.0.1 -Port 9222`
 - **Linux/macOS (Bash)**: `curl -s http://127.0.0.1:9222/json/version`
 
-### Launching the Browser if Port 9222 is Closed:
-- **Windows (Chrome)**:
-  ```powershell
-  Start-Process "chrome.exe" -ArgumentList "--remote-debugging-port=9222", "--user-data-dir=C:\tmp\agent_browser", "<QUIZ_URL>"
+### Launching the Browser & Navigating to Link:
+- **Universal Python / MCP (Recommended)**:
+  ```python
+  from quiz_pilot.browser_launcher import ensure_browser
+  # Automatically launches Edge/Chrome if closed, OR immediately navigates the active browser to url if already running!
+  ensure_browser(url="<QUIZ_URL>", port=9222)
   ```
-- **Windows (Edge)**:
+- **Windows (1-Click Batch)**:
+  ```cmd
+  launch_browser_windows.bat "<QUIZ_URL>"
+  ```
+- **Windows (Direct PowerShell)**:
   ```powershell
-  Start-Process "msedge.exe" -ArgumentList "--remote-debugging-port=9222", "--user-data-dir=C:\tmp\agent_browser", "<QUIZ_URL>"
+  Start-Process "msedge.exe" -ArgumentList "--remote-debugging-port=9222", "--user-data-dir=$env:TEMP\agent_browser", "<QUIZ_URL>"
   ```
 - **Linux**:
   ```bash
-  google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser "<QUIZ_URL>" &
+  google-chrome --remote-debugging-port=9222 --user-data-dir=~/.assessment_browser "<QUIZ_URL>" &
   ```
 - **macOS**:
   ```bash
-  /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/agent_browser "<QUIZ_URL>" &
+  /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir=~/.assessment_browser "<QUIZ_URL>" &
   ```
 
 ---

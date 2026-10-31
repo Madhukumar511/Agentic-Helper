@@ -60,15 +60,33 @@ In PowerShell:
 & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222 --user-data-dir="C:\tmp\agent_browser"
 ```
 
-### Option C: One-Click Batch File (`launch_browser.bat`)
-Double-click `launch_browser_windows.bat` in the repository root, or create one with:
-```bat
-@echo off
-echo Starting Chrome with remote debugging on port 9222...
-start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%TEMP%\agent_browser"
+### Option C: One-Click Batch File (`launch_browser_windows.bat`)
+Double-click `launch_browser_windows.bat` in the repository root, or run in terminal with a URL:
+```cmd
+launch_browser_windows.bat "https://www.coursera.org/learn/cloud-computing"
+```
+Or in Python / MCP:
+```python
+from quiz_pilot.browser_launcher import ensure_browser
+# Auto-detects Edge or Chrome and brings browser to foreground with the URL
+ensure_browser(url="https://www.coursera.org/learn/cloud-computing", port=9222)
 ```
 
 > **Tip:** You only need to log in to Coursera, Canvas, or Moodle **once**. Your login session is saved in the directory!
+
+---
+
+## 🧠 4. Failure Memory & Option Elimination (`quiz_analysis.md`)
+
+When an attempt fails or scores $< 100\%$:
+1. The engine automatically creates/updates `quiz_analysis.md` in the workspace root.
+2. Verified correct options are locked (`LOCKED_CORRECT`).
+3. Failed options are recorded as **ELIMINATED** and permanently excluded.
+4. On retry, the engine reads `quiz_analysis.md`:
+   - Matches options by text (resilient to LMS shuffling).
+   - Only processes the questions that were wrong.
+   - **Guarantees previously failed options are NEVER selected again!**
+   - Selects the next candidate option until 100% passed.
 
 ---
 

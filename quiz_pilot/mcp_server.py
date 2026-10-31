@@ -128,6 +128,34 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}}
     },
     {
+        "name": "record_quiz_analysis",
+        "description": "Records quiz feedback, locks in verified correct options, eliminates wrong options, and updates quiz_analysis.md.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "quiz_id": {"type": "string", "description": "Assessment identifier or title"},
+                "questions": {"type": "array", "description": "List of question objects"},
+                "answers": {"type": "object", "description": "Map of question index to submitted answer"},
+                "feedback": {"type": "object", "description": "Map of question index to boolean correctness (True/False)"},
+                "score_pct": {"type": "number", "description": "Final score percentage (0-100)"},
+                "attempt_num": {"type": "integer", "description": "Attempt sequence number (default: 1)", "default": 1}
+            },
+            "required": ["questions", "answers", "feedback"]
+        }
+    },
+    {
+        "name": "get_retry_answers",
+        "description": "Retrieves answers for a quiz attempt by locking in verified correct choices from quiz_analysis.md and eliminating old wrong options.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "questions": {"type": "array", "description": "List of current question objects on screen"},
+                "quiz_id": {"type": "string", "description": "Optional assessment identifier or title"}
+            },
+            "required": ["questions"]
+        }
+    },
+    {
         "name": "solve_multicast",
         "description": "Simulates FIFO or Causal Multicast delivery with Vector Clocks. Returns sequence vectors and buffered count.",
         "inputSchema": {
@@ -708,6 +736,29 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         elif name == "get_feedback":
             fb = adapter.extract_feedback()
             return {"content": [{"type": "text", "text": json.dumps(fb, indent=2)}]}
+
+        elif name == "record_quiz_analysis":
+            qid = tool_args.get("quiz_id", "assessment")
+            qs = tool_args.get("questions", [])
+            ans = tool_args.get("answers", {})
+            fb = tool_args.get("feedback", {})
+            score = tool_args.get("score_pct")
+            att = tool_args.get("attempt_num", 1)
+            md = attempt_mgr.record_attempt(
+                quiz_id=qid,
+                attempt_num=att,
+                questions=qs,
+                answers=ans,
+                feedback=fb,
+                score_pct=score
+            )
+            return {"content": [{"type": "text", "text": md}]}
+
+        elif name == "get_retry_answers":
+            qs = tool_args.get("questions", [])
+            qid = tool_args.get("quiz_id")
+            answers = attempt_mgr.get_retry_answers(questions=qs, quiz_id=qid)
+            return {"content": [{"type": "text", "text": json.dumps(answers, indent=2)}]}
 
     return {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 

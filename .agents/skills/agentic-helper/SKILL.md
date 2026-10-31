@@ -33,10 +33,11 @@ Check if the debugging browser is running. If not, **launch it automatically**:
 from quiz_pilot.browser_launcher import ensure_browser, is_browser_running
 
 # Launch Chrome/Edge with port 9222 and open target URL (or default Coursera)
+# Cross-platform: Windows, Linux, and macOS. Automatically navigates if browser is already open!
 course_url = "<URL_PROVIDED_BY_USER_OR_COURSERA>"
 ensure_browser(url=course_url, port=9222)
 ```
-*(Or use native MCP tool `launch_browser(url=course_url)` if MCP is active).*
+*(Or use native MCP tool `launch_browser(url=course_url)` if MCP is active, or run `launch_browser_windows.bat "<course_url>"` on Windows).*
 
 ---
 
@@ -97,32 +98,73 @@ Once logged in:
    - When passed ($\ge 80\%$ or green pass banner), run `FastAttemptManager().purge_all()`.
    - Never leave any `solve_*.py`, JSON dumps, or temporary files on disk.
 
-5. **Quiz Failure Re-Analysis & Shared Markdown Log**:
-   - If an attempt fails to pass, immediately record verified answers and error analysis in `quiz_analysis.md` so peer agents know the exact findings.
-   - Always match options by **exact semantic text**, since LMS platforms randomly shuffle option ordering between attempts.
-   - Immediately re-attempt and submit with corrected choices.
+5. **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:
+   - If an attempt scores $< 100\%$ or fails, agents **MUST** immediately create or update `quiz_analysis.md`:
+     ```python
+     attempt_mgr.record_attempt(
+         quiz_id=quiz_title,
+         attempt_num=attempt_num,
+         questions=questions,
+         answers=answers,
+         feedback=feedback.get("feedback", {}),
+         score_pct=feedback.get("score_pct")
+     )
+     ```
+     *(Or via MCP: `record_quiz_analysis(quiz_id=..., questions=..., answers=..., feedback=..., score_pct=...)`)*
+   - **`LOCKED_CORRECT`**: Questions scored correctly are permanently locked in with their exact verified option text.
+   - **`ELIMINATED`**: Questions scored incorrectly have the submitted option marked as permanently eliminated.
+   - **Option Shuffling Resilience**: LMS platforms randomly shuffle option order on each attempt. Always match options by **exact text string**, NOT by old index number!
+   - **On Retry Execution**:
+     ```python
+     retry_answers = attempt_mgr.get_retry_answers(questions, quiz_id=quiz_title)
+     ```
+     *(Or via MCP: `get_retry_answers(questions=...)`)*
+     - Verified answers are locked in automatically by text matching with zero compute.
+     - Failed questions automatically exclude previously chosen options. **NEVER select a failed option again!**
+     - Select from remaining uneliminated candidate options.
+   - Re-attempt and submit with corrected choices until 100% passed!
 
 6. **Advance to Next Quiz**:
    - Automatically navigate to the next incomplete assignment in the course syllabus until the entire course or specialization is passed!
 
 ---
 
-### Phase 3B: Multi-Tab Concurrent Execution (`/agentic-helper multiworker`)
-When the user types `/agentic-helper multiworker` or has multiple courses/quizzes open in tabs:
+### Phase 3B: Intelligent Multi-Tab Concurrent Execution (`/agentic-helper multiworker`)
+When the user types `/agentic-helper multiworker`:
+- **Single Course Handling**: If the active browser tab or provided URL is a single course (`/learn/<course-slug>`):
+  - Do NOT complete sequentially in a single tab!
+  - Automatically crawl all incomplete module assignments (e.g., Week 1, Week 2, Week 3, Week 4 Quizzes).
+  - Automatically open them concurrently across separate browser tabs (up to `max_concurrency: 4`).
+  - Workers run in each tab in parallel simultaneously to solve all module quizzes at once!
+- **Specialization Handling**: If on a specialization page (`/specializations/<spec-slug>`), discover child courses, open each course in its own background tab simultaneously, and complete them concurrently.
+- **Already Open Tabs**: If multiple assessment tabs are already open in the browser, process and solve all of them concurrently.
+
 ```bash
-# Direct CLI invocation with bounded workers (default concurrency: 4)
+# Direct CLI invocation with smart multiworker (auto-detects course modules or open tabs)
 agentic-helper multiworker --concurrency 4
-# or: agentic-helper solve-all --concurrency 4
 ```
 In Python / Native MCP:
 ```python
-from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync
+from quiz_pilot.tab_scheduler import smart_multiworker_sync
 
-# Executes bounded concurrent workers across all open tabs in parallel
-results = solve_all_open_quizzes_sync(max_concurrency=4, auto_submit=True)
-print(f"Passed {results['passed_count']} of {results['total_tabs']} tabs concurrently!")
+# Automatically detects course modules or open tabs, opens parallel tabs, and completes them
+results = smart_multiworker_sync(max_concurrency=4, auto_submit=True)
+print(f"Passed {results.get('passed_count', 0)} tasks concurrently across tabs!")
 ```
 *(Or use native MCP tool `solve_parallel_quizzes(max_concurrency=4)`).*
+
+---
+
+### Phase 3C: Specialization Multi-Course Parallel Execution (`/agentic-helper multiworker complete first X courses`)
+When the user requests completing the first N courses in a Specialization:
+1. Discover child courses via `SyllabusCrawler.crawl_specialization_courses(spec_url)`.
+2. Take the first N courses (`courses[:N]`, e.g. first 4 courses).
+3. Open each course in its own background tab simultaneously.
+4. Launch the parallel orchestrator via MCP tool `auto_complete_specialization(specialization_url=..., max_courses=N)` or CLI:
+   ```bash
+   agentic-helper multiworker <course1_url> <course2_url> <course3_url> <course4_url> --concurrency 4
+   ```
+5. All 4 courses execute concurrently until completion!
 
 ---
 

@@ -8,12 +8,16 @@ This document defines how **Google Antigravity IDE** and **Gemini Coding Agents*
 
 When the user types `/agentic-helper [course_url]`, or asks you to *"solve quiz"* / *"complete assessment"*:
 1. **Self-Healing Setup (Silent)**: Verify dependencies; if missing, install them automatically (`pip install -e . && python -m playwright install chromium`).
-2. **Auto-Launch Browser**: Check if port 9222 is alive. If not, auto-launch Chrome/Edge using `quiz_pilot.browser_launcher.ensure_browser(url)` or MCP `launch_browser`.
+2. **Auto-Launch & Navigate Browser**: Ensure Chrome/Edge is listening on 9222 and navigated to the target URL using `quiz_pilot.browser_launcher.ensure_browser(url)` (which opens and navigates the link automatically across Windows, Linux, and macOS).
 3. **Login Gate**: If Coursera shows a login screen, ask the user to log in and say "continue". If already logged in, proceed immediately!
 4. **Operate entirely in-memory**: Never write one-off course scripts (e.g., `solve_hw.py`) to disk! Use `CourseraAdapter` or native MCP tools directly.
 5. **Autonomously extract, solve, and submit the quiz**.
-6. **Mandatory Post-Quiz Purge**: When passed ($\ge 80\%$), automatically run `FastAttemptManager().purge_all()` or `agentic-helper clean` to wipe all temporary caches and screenshots.
-7. **Advance**: Move to the next quiz until the entire course or specialization is passed!
+6. **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:
+   - If an attempt scores $< 100\%$ or fails, immediately create or update `quiz_analysis.md` via `FastAttemptManager().record_attempt(...)` or MCP `record_quiz_analysis`.
+   - Record verified correct option texts (`LOCKED_CORRECT`) and eliminate failed option texts (`ELIMINATED`).
+   - On retry, inspect `quiz_analysis.md` via `FastAttemptManager().get_retry_answers(...)`: lock in verified choices by text match across shuffled options, focus 100% of compute strictly on wrong questions, and **NEVER select a previously failed option again**!
+7. **Mandatory Post-Quiz Purge**: When passed ($\ge 80\%$), automatically run `FastAttemptManager().purge_all()` or `agentic-helper clean` to wipe internal temporary caches while keeping verified analysis.
+8. **Advance**: Move to the next quiz until the entire course or specialization is passed!
 
 
 ---

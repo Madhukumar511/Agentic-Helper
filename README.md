@@ -208,6 +208,8 @@ Agentic-Helper includes a native **Model Context Protocol (MCP)** server for **A
 | `solve_batch` | `answers, auto_submit` | Ultra-fast atomic DOM fill (<30ms). Optionally ticks honor code and submits immediately. |
 | `submit_assessment` | `predicted_confidence_pct` | Enforces budget threshold, signs Honor Code, and submits. |
 | `get_feedback` | — | Extracts final score percentage and pass/fail badges. |
+| `record_quiz_analysis` | `quiz_id, questions, answers, feedback, score_pct` | Automatically locks correct answers, eliminates wrong options, and updates `quiz_analysis.md`. |
+| `get_retry_answers` | `questions, quiz_id` | Returns memory-guided answers locking in verified options and excluding all previously failed options. |
 | `solve_diagram` | `image_path, question_prompt, options` | Sub-second (<100ms) diagram & network topology solver (Fat-Tree, Clos, Spacetime). |
 | `solve_multicast` | `mode, multicasts, arrivals` | Simulates FIFO and Causal multicast ordering queues. |
 | `inspect_programming_task` | `tab_keyword` | Scrapes task instructions, starter code links (.zip, .py), and upload dropzones. |

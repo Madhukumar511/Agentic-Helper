@@ -267,7 +267,7 @@ class CourseraAdapter(BaseLMSAdapter):
                 fillRes[idx] = ok;
             }
 
-            if (shouldSubmit) {
+            if (doSubmit) {
                 // 1. Dismiss leftover dialogs
                 let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
                 if (cancelBtn) cancelBtn.click();
@@ -279,10 +279,14 @@ class CourseraAdapter(BaseLMSAdapter):
                              return l.toLowerCase().includes('understand and agree') || l.toLowerCase().includes('honor code');
                          });
                 if (cb && !cb.checked) {
-                    cb.checked = true;
-                    cb.dispatchEvent(new Event('change', { bubbles: true }));
-                    cb.dispatchEvent(new Event('input', { bubbles: true }));
-                    cb.click();
+                    let lbl = cb.closest('label') || cb.parentElement;
+                    if (lbl) lbl.click();
+                    else cb.click();
+                    if (!cb.checked) {
+                        cb.checked = true;
+                        cb.dispatchEvent(new Event('change', { bubbles: true }));
+                        cb.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
                 }
 
                 // 3. Click Submit button
@@ -311,8 +315,8 @@ class CourseraAdapter(BaseLMSAdapter):
         return results
 
     def submit_assessment(self) -> bool:
-        """Atomic ultra-fast submission: checks honor code and submits in a single JS execution (<30ms)."""
-        return bool(self.page.evaluate('''() => {
+        """Atomic submission: checks honor code, clicks submit, and confirms dialog."""
+        clicked = self.page.evaluate('''() => {
             // Dismiss any leftover warning modal
             let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
             if (cancelBtn) cancelBtn.click();
@@ -324,10 +328,14 @@ class CourseraAdapter(BaseLMSAdapter):
                          return l.toLowerCase().includes('understand and agree') || l.toLowerCase().includes('honor code');
                      });
             if (cb && !cb.checked) {
-                cb.checked = true;
-                cb.dispatchEvent(new Event('change', { bubbles: true }));
-                cb.dispatchEvent(new Event('input', { bubbles: true }));
-                cb.click();
+                let lbl = cb.closest('label') || cb.parentElement;
+                if (lbl) lbl.click();
+                else cb.click();
+                if (!cb.checked) {
+                    cb.checked = true;
+                    cb.dispatchEvent(new Event('change', { bubbles: true }));
+                    cb.dispatchEvent(new Event('input', { bubbles: true }));
+                }
             }
 
             // 2. Click Submit button
@@ -335,13 +343,23 @@ class CourseraAdapter(BaseLMSAdapter):
                             Array.from(document.querySelectorAll('button')).find(b => 
                                 b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
                             );
-            let clicked = false;
+            let didClick = false;
             if (submitBtn) {
                 submitBtn.click();
-                clicked = true;
+                didClick = true;
             }
 
-            // 3. Dismiss confirmation modals if any
+            return didClick;
+        }''')
+
+        # Fast reactive confirm if modal dialog popped up
+        time.sleep(0.5)
+        self.page.evaluate('''() => {
+            let dialogBtn = document.querySelector('[data-testid="dialog-submit-button"]');
+            if (dialogBtn) {
+                dialogBtn.click();
+                return;
+            }
             let dialog = document.querySelector('div[role="dialog"], [data-testid="assignment-view-tunnel-vision"]');
             if (dialog) {
                 let confirmBtn = Array.from(dialog.querySelectorAll('button')).find(b => {
@@ -350,9 +368,8 @@ class CourseraAdapter(BaseLMSAdapter):
                 });
                 if (confirmBtn) confirmBtn.click();
             }
-
-            return clicked;
-        }'''))
+        }''')
+        return bool(clicked)
 
     def extract_feedback(self) -> Dict[str, Any]:
         return self.page.evaluate('''() => {

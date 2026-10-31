@@ -166,9 +166,7 @@ class AsyncTabScheduler:
                 if answer_generator:
                     answers = answer_generator(questions)
                 else:
-                    # Default: first option if no custom solver provided
-                    for q in questions:
-                        answers[q["index"]] = 0
+                    answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=title)
 
                 # 3. Fill Answers in Tab DOM in a single atomic batch (<30ms)
                 payload = {str(k): v for k, v in answers.items()}
@@ -287,6 +285,20 @@ class AsyncTabScheduler:
                     result["score_pct"] = fb.get("score_pct")
                     result["passed"] = fb.get("passed", False)
                     result["status"] = "PASSED" if result["passed"] else "COMPLETED"
+
+                    # 6. Record feedback and update quiz_analysis.md
+                    try:
+                        fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
+                        self.attempt_mgr.record_attempt(
+                            quiz_id=title,
+                            attempt_num=1,
+                            questions=questions,
+                            answers=answers,
+                            feedback=fb_map,
+                            score_pct=fb.get("score_pct")
+                        )
+                    except Exception:
+                        pass
 
             except Exception as e:
                 logger.error(f"Error processing tab {tab_index} ({url}): {e}")

@@ -63,13 +63,29 @@ class CourseOrchestrator:
             adapter = get_lms_adapter(page)
             questions = adapter.extract_questions()
             if questions:
-                answers = {q["index"]: 0 for q in questions}
+                answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=item_title)
                 if hasattr(adapter, "batch_fill_answers"):
                     adapter.batch_fill_answers(answers, auto_submit=True)
                 else:
                     for q in questions:
-                        adapter.fill_answer(q["index"], 0)
+                        adapter.fill_answer(q["index"], answers.get(q["index"], 0))
                     adapter.submit_assessment()
+                
+                try:
+                    fb = adapter.extract_feedback()
+                    self.attempt_mgr.record_attempt(
+                        quiz_id=item_title,
+                        attempt_num=1,
+                        questions=questions,
+                        answers=answers,
+                        feedback=fb.get("feedback", {}),
+                        score_pct=fb.get("score_pct")
+                    )
+                    item_res["score_pct"] = fb.get("score_pct")
+                    item_res["passed"] = fb.get("passed", False)
+                except Exception:
+                    pass
+
                 item_res["status"] = "submitted"
                 item_res["questions_solved"] = len(questions)
 
