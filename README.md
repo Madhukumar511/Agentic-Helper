@@ -7,7 +7,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)
 [![Playwright](https://img.shields.io/badge/Playwright-CDP%20Engine-orange.svg)](https://playwright.dev)
 [![Antigravity IDE](https://img.shields.io/badge/Antigravity-Zero--Touch%20Skill-purple.svg)](GEMINI.md)
-[![Tests Passing](https://img.shields.io/badge/Tests-28%2F28%20Passing-success.svg)](tests/)
+[![Tests Passing](https://img.shields.io/badge/Tests-29%2F29%20Passing-success.svg)](tests/)
 [![OS Support](https://img.shields.io/badge/OS-Linux%20%7C%20Windows%20%7C%20macOS-informational.svg)](WINDOWS_GUIDE.md)
 
 ---

@@ -367,8 +367,14 @@ class AsyncTabScheduler:
                     await page.goto(url, wait_until="commit")
                 created_pages.append(page)
 
-            # Allow pages to mount
-            await asyncio.sleep(4)
+            # Allow pages to mount reactively without blind sleeps
+            async def fast_wait_tab(p_tab):
+                try:
+                    await p_tab.wait_for_selector('div[role="radiogroup"], div[role="group"], [data-testid*="question"], main', timeout=3000)
+                except Exception:
+                    pass
+
+            await asyncio.gather(*[fast_wait_tab(tab) for tab in created_pages], return_exceptions=True)
 
             semaphore = asyncio.Semaphore(self.max_concurrency)
             tasks = [

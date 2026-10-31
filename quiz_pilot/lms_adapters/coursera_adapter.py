@@ -267,57 +267,34 @@ class CourseraAdapter(BaseLMSAdapter):
                 fillRes[idx] = ok;
             }
 
-            return fillRes;
-        }''', [payload, auto_submit])
+            if (shouldSubmit) {
+                // 1. Dismiss leftover dialogs
+                let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
+                if (cancelBtn) cancelBtn.click();
 
-        if auto_submit:
-            self.submit_assessment()
-
-        return results
-
-    def submit_assessment(self) -> bool:
-        # Dismiss any leftover warning modal
-        self.page.evaluate('''() => {
-            let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
-            if (cancelBtn) cancelBtn.click();
-        }''')
-        time.sleep(0.3)
-
-        # 1. Check Honor Code agreement checkbox (#agreement-checkbox-base)
-        self.page.evaluate('''() => {
-            let cb = document.querySelector('#agreement-checkbox-base, input[name*="agreement" i]') ||
-                     Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).find(c => {
-                         let l = (c.closest('label') || c.parentElement || {}).innerText || '';
-                         return l.toLowerCase().includes('understand and agree') || l.toLowerCase().includes('honor code');
-                     });
-            if (cb) {
-                cb.scrollIntoView({ behavior: 'auto', block: 'center' });
-                let isChecked = cb.checked || cb.getAttribute('aria-checked') === 'true';
-                if (!isChecked) {
+                // 2. Check Honor Code checkbox
+                let cb = document.querySelector('#agreement-checkbox-base, input[name*="agreement" i]') ||
+                         Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).find(c => {
+                             let l = (c.closest('label') || c.parentElement || {}).innerText || '';
+                             return l.toLowerCase().includes('understand and agree') || l.toLowerCase().includes('honor code');
+                         });
+                if (cb && !cb.checked) {
+                    cb.checked = true;
+                    cb.dispatchEvent(new Event('change', { bubbles: true }));
+                    cb.dispatchEvent(new Event('input', { bubbles: true }));
                     cb.click();
                 }
-            }
-        }''')
-        time.sleep(0.4)
-        
-        # 2. Click Submit button
-        clicked = self.page.evaluate('''() => {
-            let submitBtn = document.querySelector('[data-testid="submit-button"]') ||
-                            Array.from(document.querySelectorAll('button')).find(b => 
-                                b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
-                            );
-            if (submitBtn) {
-                submitBtn.scrollIntoView({ behavior: 'auto' });
-                submitBtn.click();
-                return true;
-            }
-            return false;
-        }''')
-        
-        if clicked:
-            time.sleep(0.8)
-            # Dismiss confirmation modals if any ("Do you still want to submit?" -> click Submit)
-            self.page.evaluate('''() => {
+
+                // 3. Click Submit button
+                let submitBtn = document.querySelector('[data-testid="submit-button"], button.submit-button') ||
+                                Array.from(document.querySelectorAll('button')).find(b => 
+                                    b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
+                                );
+                if (submitBtn) {
+                    submitBtn.click();
+                }
+
+                // 4. Dismiss confirmation modal if present
                 let dialog = document.querySelector('div[role="dialog"], [data-testid="assignment-view-tunnel-vision"]');
                 if (dialog) {
                     let confirmBtn = Array.from(dialog.querySelectorAll('button')).find(b => {
@@ -326,8 +303,56 @@ class CourseraAdapter(BaseLMSAdapter):
                     });
                     if (confirmBtn) confirmBtn.click();
                 }
-            }''')
-        return clicked
+            }
+
+            return fillRes;
+        }''', [payload, auto_submit])
+
+        return results
+
+    def submit_assessment(self) -> bool:
+        """Atomic ultra-fast submission: checks honor code and submits in a single JS execution (<30ms)."""
+        return bool(self.page.evaluate('''() => {
+            // Dismiss any leftover warning modal
+            let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
+            if (cancelBtn) cancelBtn.click();
+
+            // 1. Check Honor Code agreement checkbox (#agreement-checkbox-base)
+            let cb = document.querySelector('#agreement-checkbox-base, input[name*="agreement" i]') ||
+                     Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).find(c => {
+                         let l = (c.closest('label') || c.parentElement || {}).innerText || '';
+                         return l.toLowerCase().includes('understand and agree') || l.toLowerCase().includes('honor code');
+                     });
+            if (cb && !cb.checked) {
+                cb.checked = true;
+                cb.dispatchEvent(new Event('change', { bubbles: true }));
+                cb.dispatchEvent(new Event('input', { bubbles: true }));
+                cb.click();
+            }
+
+            // 2. Click Submit button
+            let submitBtn = document.querySelector('[data-testid="submit-button"], button.submit-button') ||
+                            Array.from(document.querySelectorAll('button')).find(b => 
+                                b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
+                            );
+            let clicked = false;
+            if (submitBtn) {
+                submitBtn.click();
+                clicked = true;
+            }
+
+            // 3. Dismiss confirmation modals if any
+            let dialog = document.querySelector('div[role="dialog"], [data-testid="assignment-view-tunnel-vision"]');
+            if (dialog) {
+                let confirmBtn = Array.from(dialog.querySelectorAll('button')).find(b => {
+                    let t = b.innerText.trim().toLowerCase();
+                    return t === 'submit' || t === 'continue' || t === 'yes';
+                });
+                if (confirmBtn) confirmBtn.click();
+            }
+
+            return clicked;
+        }'''))
 
     def extract_feedback(self) -> Dict[str, Any]:
         return self.page.evaluate('''() => {

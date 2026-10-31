@@ -36,14 +36,12 @@ class SyllabusCrawler:
 
         if target_url not in current_url:
             await self.page.evaluate("(u) => window.location.href = u", target_url)
-            await asyncio.sleep(4)
 
-        # Wait for assignments table to render
+        # Wait reactively for assignments table to render without blind sleeps
         try:
-            await self.page.wait_for_selector("table, div[role=\"table\"], [data-testid=\"grade-item\"], main", timeout=12000)
-            await asyncio.sleep(1)
+            await self.page.wait_for_selector("[class*='css-1qd65r'], div[role='row'], table, div[role='table'], [data-testid='grade-item']", timeout=6000)
         except Exception:
-            pass
+            await asyncio.sleep(1.0)
 
         items = await self.page.evaluate('''() => {
             const results = [];
@@ -133,13 +131,11 @@ class SyllabusCrawler:
         current_url = getattr(self.page, "url", "")
         if target_url not in current_url:
             await self.page.evaluate("(u) => window.location.href = u", target_url)
-            await asyncio.sleep(4)
 
         try:
-            await self.page.wait_for_selector("a[href*=\"/learn/\"], h3", timeout=12000)
-            await asyncio.sleep(1)
+            await self.page.wait_for_selector("a[href*=\"/learn/\"], h3", timeout=6000)
         except Exception:
-            pass
+            await asyncio.sleep(1.0)
 
         courses = await self.page.evaluate('''() => {
             const courseLinks = Array.from(document.querySelectorAll('a[href*="/learn/"]'));

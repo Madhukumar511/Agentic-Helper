@@ -41,10 +41,16 @@ class CourseOrchestrator:
             await page.evaluate("(u) => window.location.href = u", item_url)
         except Exception:
             try:
-                await page.goto(item_url, wait_until="domcontentloaded")
+                await page.goto(item_url, wait_until="domcontentloaded", timeout=12000)
             except Exception:
                 pass
-        await asyncio.sleep(4)
+
+        # Fast reactive wait: resolves immediately when assessment elements mount (<500ms)
+        try:
+            await page.wait_for_selector('div[role="radiogroup"], div[role="group"], [data-testid*="question"], main', timeout=4000)
+            await asyncio.sleep(0.5)
+        except Exception:
+            await asyncio.sleep(1.0)
 
         item_res = {
             "title": item_title,
@@ -192,17 +198,24 @@ class CourseOrchestrator:
 
             target_courses = all_courses[:max_courses] if max_courses else all_courses
 
-            course_results = []
-            for c in target_courses:
-                res = await self.auto_complete_course(
-                    course_url=c["url"],
-                    prefer_direct_api=prefer_direct_api
-                )
-                course_results.append({
-                    "course_title": c.get("title"),
-                    "course_url": c.get("url"),
-                    "result": res
-                })
+            course_semaphore = asyncio.Semaphore(min(self.max_concurrency, len(target_courses)))
+
+            async def run_single_course(c_info):
+                async with course_semaphore:
+                    res = await self.auto_complete_course(
+                        course_url=c_info["url"],
+                        prefer_direct_api=prefer_direct_api
+                    )
+                    return {
+                        "course_title": c_info.get("title"),
+                        "course_url": c_info.get("url"),
+                        "result": res
+                    }
+
+            course_results = await asyncio.gather(
+                *[run_single_course(c) for c in target_courses],
+                return_exceptions=False
+            )
 
             return {
                 "specialization": spec_url,
