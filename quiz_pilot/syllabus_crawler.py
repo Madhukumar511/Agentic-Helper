@@ -45,12 +45,25 @@ class SyllabusCrawler:
 
         items = await self.page.evaluate('''() => {
             const results = [];
-            const rows = Array.from(document.querySelectorAll('tr, div[role="row"], div[data-testid*="assignment"]'));
+            const rows = Array.from(document.querySelectorAll('tr, div[role="row"], div[data-testid*="assignment"], div[data-testid="rc-ItemRow"]'));
             
             rows.forEach(r => {
                 const text = r.innerText || '';
-                const linkEl = r.querySelector('a[href*="/learn/"]');
-                if (!linkEl && !text.includes("Quiz") && !text.includes("Assignment") && !text.includes("Submission") && !text.includes("Review")) {
+                const linkEl = r.querySelector('a[href]');
+                const lowerText = text.toLowerCase();
+                const isAssignmentRow = (
+                    lowerText.includes("assignment") ||
+                    lowerText.includes("quiz") ||
+                    lowerText.includes("exam") ||
+                    lowerText.includes("homework") ||
+                    lowerText.includes("submission") ||
+                    lowerText.includes("review") ||
+                    lowerText.includes("graded") ||
+                    lowerText.includes("plugin") ||
+                    lowerText.includes("widget")
+                );
+
+                if (!linkEl && !isAssignmentRow) {
                     return;
                 }
                 
@@ -61,17 +74,31 @@ class SyllabusCrawler:
                 let itemType = 'quiz';
                 if (/programming/i.test(text) || /programming/i.test(href)) {
                     itemType = 'programming';
-                } else if (/peer/i.test(text) || /peer/i.test(href) || /feedback/i.test(href)) {
+                } else if (/peer/i.test(text) || /peer/i.test(href)) {
                     itemType = 'peer';
-                } else if (/review/i.test(text)) {
+                } else if (/review/i.test(text) || /review/i.test(href)) {
                     itemType = 'peer_review';
+                } else if (/ungraded|plugin|widget/i.test(text) || /ungradedWidget/i.test(href)) {
+                    itemType = 'ungraded';
                 }
                 
                 let status = 'not_attempted';
                 if (/passed/i.test(text) || /success/i.test(text) || /100%/i.test(text)) {
                     status = 'passed';
-                } else if (/submitted/i.test(text)) {
+                } else if (itemType === 'peer' || itemType === 'peer_review') {
+                    const selfSubmitted = /submitted/i.test(text);
+                    const reviewsDone = (/4\/4|3\/3/i.test(text) || /reviewed/i.test(text)) && !/0\/4|1\/4|2\/4|0\/3|1\/3/i.test(text);
+                    if (selfSubmitted && reviewsDone) {
+                        status = 'submitted';
+                    } else if (selfSubmitted && !reviewsDone) {
+                        status = 'peer_reviews_pending';
+                    } else {
+                        status = 'not_attempted';
+                    }
+                } else if (/submitted/i.test(text) || /grading in progress/i.test(text)) {
                     status = 'submitted';
+                } else if (/didn't pass|failed|error/i.test(text)) {
+                    status = 'failed';
                 }
                 
                 let weight = '';
@@ -80,7 +107,7 @@ class SyllabusCrawler:
                     weight = weightMatch[1] + '%';
                 }
 
-                if (title && (href || text.includes("%") || text.includes("Due"))) {
+                if (title && (href || isAssignmentRow || text.includes("%") || text.includes("Due"))) {
                     results.push({
                         title: title,
                         type: itemType,

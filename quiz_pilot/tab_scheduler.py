@@ -24,6 +24,12 @@ LMS_KEYWORDS = [
     "assignment-submission", "quiz", "exam", "assessment", "attempt"
 ]
 
+ASSESSMENT_PATH_KEYWORDS = [
+    "/quiz/", "/exam/", "/assignment-submission/", "/programming/",
+    "/peer/", "/supplement/", "/attempt", "/ungradedwidget/",
+    "forms.gle", "docs.google.com/forms", "quizzes/"
+]
+
 
 class AsyncTabScheduler:
     """
@@ -33,6 +39,15 @@ class AsyncTabScheduler:
         self.cdp_url = cdp_url
         self.max_concurrency = max_concurrency
         self.attempt_mgr = FastAttemptManager()
+
+    @staticmethod
+    def is_assessment_tab(page: Page) -> bool:
+        """Determines if a page is an active assessment/quiz/programming/peer submission tab."""
+        try:
+            url_lower = page.url.lower()
+            return any(k in url_lower for k in ASSESSMENT_PATH_KEYWORDS)
+        except Exception:
+            return False
 
     @staticmethod
     def is_assessment_page(page: Page) -> bool:
@@ -48,7 +63,7 @@ class AsyncTabScheduler:
         assessment_pages = []
         for ctx in browser.contexts:
             for p in ctx.pages:
-                if self.is_assessment_page(p):
+                if self.is_assessment_tab(p) or self.is_assessment_page(p):
                     assessment_pages.append(p)
         return assessment_pages
 
@@ -254,9 +269,12 @@ class AsyncTabScheduler:
             for url in urls:
                 page = await context.new_page()
                 try:
-                    await page.evaluate("(u) => window.location.href = u", url)
+                    await page.goto(url, wait_until="domcontentloaded", timeout=15000)
                 except Exception:
-                    await page.goto(url, wait_until="commit")
+                    try:
+                        await page.goto(url, wait_until="commit", timeout=10000)
+                    except Exception:
+                        pass
                 created_pages.append(page)
 
             # Allow pages to mount reactively without blind sleeps
@@ -290,23 +308,19 @@ class AsyncTabScheduler:
 
     async def smart_multiworker(
         self,
+        target_url: Optional[str] = None,
         auto_submit: bool = True,
         prefer_direct_api: bool = True
     ) -> Dict[str, Any]:
         """
         Intelligent Multi-Worker:
         1. Connects to browser over CDP.
-        2. Detects open assessment/quiz tabs:
-           - If multiple assessment tabs (>= 2) are already open, solves them concurrently.
-        3. If only 1 tab is open (or tabs are on course / specialization homepages):
-           - If tab URL is a Specialization (/specializations/<slug>):
-             Discovers child courses, opens them in separate tabs, and completes them concurrently.
-           - If tab URL is a Single Course (/learn/<slug>):
-             Crawls the syllabus to extract all incomplete module assignments,
-             opens them across multiple browser tabs (up to max_concurrency),
-             and solves them concurrently in parallel!
-           - If tab is an active quiz:
-             Solves the assessment directly.
+        2. Detects open assessment/quiz/submission tabs:
+           - If multiple assessment tabs (>= 2) are already open, solves them concurrently in parallel!
+        3. If tabs are on course / specialization / my-learning homepages, or target_url is specified:
+           - Specialization (/specializations/<slug>): Discovers child courses, opens them in separate isolated tabs, and completes them concurrently in parallel!
+           - Single Course (/learn/<slug>): Crawls syllabus, opens incomplete module assignments across multiple tabs (up to max_concurrency), and solves concurrently!
+           - My-Learning (/my-learning): Extracts current active course and auto-completes.
         """
         async with async_playwright() as p:
             try:
@@ -315,27 +329,49 @@ class AsyncTabScheduler:
                 return {"error": f"Failed to connect to browser on CDP {self.cdp_url}: {e}"}
 
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
-            assessment_tabs = [page for page in context.pages if self.is_assessment_page(page)]
 
-            # Check if multiple actual quiz/submission tabs are already open
+            # 1. Check if multiple actual quiz/submission tabs are already open
             quiz_tabs = [
-                page for page in assessment_tabs
-                if any(k in page.url.lower() for k in ["/quiz/", "/exam/", "/assignment-submission/", "/attempt", "form"])
+                page for page in context.pages
+                if self.is_assessment_tab(page)
             ]
 
-            if len(quiz_tabs) >= 2:
-                # Solve existing multi-tabs
+            if len(quiz_tabs) >= 2 and not target_url:
+                # Solve existing multi-tabs concurrently
                 return await self.run_parallel_batch(auto_submit=auto_submit)
 
-            # Determine target URL from the active or first page
-            target_page = context.pages[0] if context.pages else None
-            if not target_page:
-                return {"error": "No open browser pages found."}
+            # 2. Determine target URL
+            current_url = target_url or ""
+            if not current_url:
+                # Search all open tabs for a specialization or course URL
+                for pg in context.pages:
+                    u = pg.url.lower()
+                    if "/specializations/" in u:
+                        current_url = pg.url
+                        break
+                    elif "/learn/" in u and not any(k in u for k in ["/lecture/", "/discussionprompt/"]):
+                        current_url = pg.url
+                        break
 
-            current_url = target_page.url
+            # Fallback to active/first page URL
+            if not current_url and context.pages:
+                current_url = context.pages[0].url
 
             from quiz_pilot.course_orchestrator import CourseOrchestrator
             orch = CourseOrchestrator(cdp_url=self.cdp_url, max_concurrency=self.max_concurrency)
+
+            # Handle my-learning dashboard: find the first in-progress course
+            if "my-learning" in current_url:
+                try:
+                    course_links = await context.pages[0].evaluate('''() => {
+                        return Array.from(document.querySelectorAll('a[href*="/learn/"]'))
+                            .map(a => a.href)
+                            .filter(h => !h.includes('/home') && !h.includes('/welcome'));
+                    }''')
+                    if course_links:
+                        current_url = course_links[0]
+                except Exception:
+                    pass
 
             # Case A: Specialization page
             if "/specializations/" in current_url:
@@ -389,8 +425,9 @@ def open_and_solve_parallel_sync(
 def smart_multiworker_sync(
     cdp_url: str = "http://127.0.0.1:9222",
     max_concurrency: int = 4,
-    auto_submit: bool = True
+    auto_submit: bool = True,
+    target_url: Optional[str] = None
 ) -> Dict[str, Any]:
     """Synchronous wrapper for smart_multiworker."""
     scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=max_concurrency)
-    return asyncio.run(scheduler.smart_multiworker(auto_submit=auto_submit))
+    return asyncio.run(scheduler.smart_multiworker(target_url=target_url, auto_submit=auto_submit))

@@ -1,22 +1,17 @@
-# GitHub Copilot Instructions for Agentic-Helper
+# GitHub Copilot Instructions for Agentic-Helper (15 Immutable Strict Rules)
 
-- **Mandatory Parallel Multi-Tab Workers**: NEVER solve sequentially one-by-one in a single tab!
-  - If Specialization (`/specializations/<slug>`): Open EACH child course in its own browser tab simultaneously and complete all child courses in parallel concurrently in under 30 minutes!
-  - If Single Course (`/learn/<slug>`): Open different module assignments in separate browser tabs simultaneously (Week 1, Week 2, Week 3, Week 4 Quizzes) and solve all modules in parallel concurrently!
-  - Universal execution: Call `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or MCP tool `smart_multiworker()`.
-- **Zero-Scratch File Directive**: Never generate one-off scripts like `solve_*.py` or `check.py`. Execute all operations in-memory using `quiz_pilot.lms_adapters`, `quiz_pilot.attempt_protector`, or native MCP tools.
-- **Windows Browser Launch & Navigation**: Call `quiz_pilot.browser_launcher.ensure_browser(url, port=9222)`. It automatically opens the browser and navigates to the URL even if the browser is already listening on port 9222.
-- **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:
-  - If a quiz attempt does not score 100%, immediately create or update `quiz_analysis.md` using `FastAttemptManager().record_attempt(...)`.
-  - Lock in verified correct options as `LOCKED_CORRECT`.
-  - Mark wrong options as `ELIMINATED`.
-  - On subsequent retries, inspect `quiz_analysis.md` via `FastAttemptManager().get_retry_answers(...)`: match by text (handling LMS option shuffling), keep verified correct options, and NEVER select an eliminated option again. Focus only on unresolved questions.
-- **Cleanup**: Clean `.assessment_cache/` and temp files using `FastAttemptManager().purge_all()` when quizzes or courses are completed.
-- **Direct API & Safe DOM Fallback**: Attempt direct REST API with grade polling first; cleanly fall through to DOM execution on error/400.
-- **Async & Multi-Tab WebSocket Pool**: Tab finders and peer managers are async; server maintains `active_websockets` pool across multiple tabs.
-- **100% Answer Guarantee**: Never leave any question unanswered. Fast millisecond DOM sweep (<50ms) guarantees every question is filled before submission.
-- **Zero Websearch**: Do not search web for standard curriculum/CS problems; local solvers handle in-memory. Only search if unsolvable current events question.
-- **Always Speak Caveman**: Terse, high-signal, ultra-compressed output without filler words.
-- **Mandatory Peer-Graded Two-Step Protocol**:
-  - Step 1: Always submit your own assignment first on `/submit` (title, report PDF via Uppy, video URL, honor code checkbox, submit + modal dialog confirmation). Peer reviews are locked until your submission is complete!
-  - Step 2: Only after submission is confirmed, navigate to `/give-feedback` / `/review-next` and grade 3-4 peers with rapid random option marking (zero overthinking/points analysis) and brief positive feedback!
+- **Rule 1 (Pure In-Memory Engine Law)**: Never create one-off scripts like solve_*.py, check.py, or unpack zips to /tmp. Execute all operations in-memory using quiz_pilot built-in classes or native MCP tools.
+- **Rule 2 (ZERO External Git Cloning Law)**: Never run git clone to pull random student repositories from GitHub for course assignments. Implement solutions cleanly in-memory.
+- **Rule 3 (Mandatory Parallel Multi-Tab Workers)**: NEVER solve sequentially one-by-one in a single tab! In Specializations, open each child course in its own tab simultaneously; in Single Courses, open module assignments across parallel tabs and complete concurrently.
+- **Rule 4 (Multi-Tab & Specialization Tab Isolation)**: Never share a single tab across concurrent course runs. In Specializations, open each child course in its own isolated tab (context.new_page()) so syllabus crawls and submissions never collide.
+- **Rule 5 (Mandatory 100% Comprehensive Assignment Completion)**: Non-bypassable mandate: complete every item labeled "Assignment" (Graded Assignment, Peer-graded Assignment, Programming Assignment, Ungraded Plugins/Surveys). Zero incomplete items when finishing a course.
+- **Rule 6 (Mandatory Peer-Graded Two-Step Protocol)**: Step 1: Submit report PDF & demo link first (unlocks peer review). Step 2: Navigate to /give-feedback and grade 3-4 peers with rapid random option marking and brief positive feedback.
+- **Rule 7 (Mandatory quiz_analysis.md Failure Memory & Option Elimination)**: Record failed attempts in quiz_analysis.md, lock verified correct choices (LOCKED_CORRECT), deterministically eliminate failed options (ELIMINATED), and NEVER pick a failed option again on retries.
+- **Rule 8 (Speed & Accuracy Balancing)**: Combine fast millisecond execution with >= 80% passing accuracy. Budget threshold check prevents burning attempts if confidence is low.
+- **Rule 9 (100% Answer Guarantee)**: Never leave questions unanswered. Instant sub-millisecond failsafe check selects candidates across all inputs before submission.
+- **Rule 10 (Zero Websearch)**: Never search web for CS/programming/cloud questions. Built-in algorithms solve locally in-memory. Search strictly reserved for dynamic real-time news questions.
+- **Rule 11 (Direct API First with Safe DOM Fallback)**: Attempt direct REST API submission with grade polling and memory recording first via CourseraDirectAPI; cleanly fall through to DOM adapter on failure or HTTP 400.
+- **Rule 12 (Token Reduction Enforcement)**: Methods A, C, D strictly enforced. Filter command outputs to /dev/null 2>&1 or pipes (grep/jq/head). Direct REST API first. Regularly use /compact to prune conversation history.
+- **Rule 13 (Always Speak Caveman)**: Terse, smart, compressed communication (~65% token savings). Drop filler/pleasantries. Accurate technical substance only.
+- **Rule 14 (Unified Async & Tab Connection Pool)**: Await async tab finders (find_assessment_page), and utilize the WebSocket server connection pool (active_websockets) so multiple tabs stay connected.
+- **Rule 15 (Automatic Zero-Artifact Cleanup)**: All screenshots in .assessment_cache/screenshots/. Run FastAttemptManager().purge_all() and quiz-pilot clean upon passing or course completion.

@@ -238,18 +238,63 @@ class CourseOrchestrator:
             if asyncio.iscoroutine(t_info):
                 t_info = await t_info
             item_res["peer_mode"] = t_info.get("mode")
-            if t_info.get("mode") == "review":
+            if t_info.get("mode") == "submit":
+                sub_res = prm.submit_peer_assignment(title=item_title)
+                if asyncio.iscoroutine(sub_res):
+                    sub_res = await sub_res
+                item_res["submitted"] = sub_res.get("success", False)
+                # Then complete required peer reviews
                 rev_res = prm.complete_peer_reviews(count=4)
                 if asyncio.iscoroutine(rev_res):
-                    await rev_res
+                    rev_res = await rev_res
+                item_res["reviews_done"] = rev_res.get("reviews_submitted")
+                item_res["status"] = "completed"
+            else:
+                rev_res = prm.complete_peer_reviews(count=4)
+                if asyncio.iscoroutine(rev_res):
+                    rev_res = await rev_res
                 item_res["status"] = "reviews_completed"
+                item_res["reviews_done"] = rev_res.get("reviews_submitted")
+
+        elif item_type == "programming":
+            pam = ProgrammingAssignmentManager(cdp_url=self.cdp_url)
+            spec = await pam.extract_task_spec(page=page)
+            item_res["title"] = spec.get("title", item_title)
+            item_res["task_type"] = spec.get("task_type")
+            item_res["has_file_input"] = spec.get("has_file_input")
+            item_res["latest_score"] = spec.get("latest_score")
+            item_res["passed"] = spec.get("is_passed", False)
+            item_res["status"] = "passed" if spec.get("is_passed") else "inspected"
+
+        elif item_type == "ungraded":
+            try:
+                mark_btn = page.locator('button:has-text("Mark as completed")')
+                if await mark_btn.count() > 0:
+                    await mark_btn.first.click()
+                    await asyncio.sleep(0.5)
+                    item_res["status"] = "marked_completed"
+                    item_res["passed"] = True
+            except Exception:
+                pass
+
+        # Check for ungraded / plugin completion buttons (e.g. "Mark as completed")
+        try:
+            mark_btn = page.locator('button:has-text("Mark as completed")')
+            if await mark_btn.count() > 0:
+                await mark_btn.first.click()
+                await asyncio.sleep(0.5)
+                item_res["status"] = "marked_completed"
+        except Exception:
+            pass
 
         return item_res
 
     async def auto_complete_course(
         self,
         course_url: str,
-        prefer_direct_api: bool = True
+        prefer_direct_api: bool = True,
+        page: Optional[Any] = None,
+        context: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Autonomously discovers and completes an entire course:
@@ -257,13 +302,9 @@ class CourseOrchestrator:
         2. Solves quizzes, programming assignments, and peer reviews
         3. Returns overall completion report
         """
-        async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp(self.cdp_url)
-            context = browser.contexts[0] if browser.contexts else await browser.new_context()
-            page = context.pages[0] if context.pages else await context.new_page()
-
+        async def _run_course(active_page, active_context):
             # 1. Syllabus Crawl
-            crawler = SyllabusCrawler(page=page)
+            crawler = SyllabusCrawler(page=active_page)
             plan = await crawler.crawl_course_assignments(course_url)
             pending_items = plan.get("execution_plan", [])
 
@@ -279,20 +320,20 @@ class CourseOrchestrator:
             direct_api = None
             if prefer_direct_api:
                 try:
-                    direct_api = await CourseraDirectAPI.from_page(page)
+                    direct_api = await CourseraDirectAPI.from_page(active_page)
                 except Exception:
                     direct_api = None
 
             # 2. Multi-Tab Parallel Execution across pending assignments / modules
             num_workers = min(self.max_concurrency, len(pending_items))
-            if num_workers <= 1:
+            if num_workers <= 1 or not active_context:
                 for item in pending_items:
-                    res = await self._solve_item_on_page(page, item, direct_api=direct_api)
+                    res = await self._solve_item_on_page(active_page, item, direct_api=direct_api)
                     results.append(res)
             else:
-                worker_pages = [page]
+                worker_pages = [active_page]
                 for _ in range(num_workers - 1):
-                    p_new = await context.new_page()
+                    p_new = await active_context.new_page()
                     worker_pages.append(p_new)
 
                 queue = asyncio.Queue()
@@ -333,6 +374,18 @@ class CourseOrchestrator:
                 "items": results
             }
 
+        if page and context:
+            return await _run_course(page, context)
+        elif page:
+            ctx = getattr(page, "context", None)
+            return await _run_course(page, ctx)
+
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(self.cdp_url)
+            ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+            pg = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            return await _run_course(pg, ctx)
+
     async def auto_complete_specialization(
         self,
         spec_url: str,
@@ -359,15 +412,24 @@ class CourseOrchestrator:
 
             async def run_single_course(c_info):
                 async with course_semaphore:
-                    res = await self.auto_complete_course(
-                        course_url=c_info["url"],
-                        prefer_direct_api=prefer_direct_api
-                    )
-                    return {
-                        "course_title": c_info.get("title"),
-                        "course_url": c_info.get("url"),
-                        "result": res
-                    }
+                    c_page = await context.new_page()
+                    try:
+                        res = await self.auto_complete_course(
+                            course_url=c_info["url"],
+                            prefer_direct_api=prefer_direct_api,
+                            page=c_page,
+                            context=context
+                        )
+                        return {
+                            "course_title": c_info.get("title"),
+                            "course_url": c_info.get("url"),
+                            "result": res
+                        }
+                    finally:
+                        try:
+                            await c_page.close()
+                        except Exception:
+                            pass
 
             course_results = await asyncio.gather(
                 *[run_single_course(c) for c in target_courses],

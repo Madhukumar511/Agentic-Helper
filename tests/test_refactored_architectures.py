@@ -569,3 +569,64 @@ def test_purge_all_cleans_bridge_temp_files(tmp_path):
     assert not os.path.exists(os.path.join(cache_dir, "quiz_analysis.md"))
 
 
+def test_tab_scheduler_assessment_tab_detection():
+    """
+    Verifies AsyncTabScheduler.is_assessment_tab accurately identifies real
+    assessment URLs (quizzes, exams, submissions, programming, peers)
+    while excluding generic non-assessment Coursera URLs.
+    """
+    from quiz_pilot.tab_scheduler import AsyncTabScheduler
+
+    mock_quiz = MagicMock()
+    mock_quiz.url = "https://www.coursera.org/learn/cloud-computing/exam/7Rjgf/homework-5"
+    assert AsyncTabScheduler.is_assessment_tab(mock_quiz) is True
+
+    mock_prog = MagicMock()
+    mock_prog.url = "https://www.coursera.org/learn/cloud-networking/programming/BmKvW/submission"
+    assert AsyncTabScheduler.is_assessment_tab(mock_prog) is True
+
+    mock_peer = MagicMock()
+    mock_peer.url = "https://www.coursera.org/learn/cloud-computing-project/peer/t1/review"
+    assert AsyncTabScheduler.is_assessment_tab(mock_peer) is True
+
+    mock_home = MagicMock()
+    mock_home.url = "https://www.coursera.org/organizations/vvce/my-learning"
+    assert AsyncTabScheduler.is_assessment_tab(mock_home) is False
+
+
+@pytest.mark.anyio
+async def test_course_orchestrator_isolated_page_and_programming():
+    """
+    Verifies CourseOrchestrator._solve_item_on_page handles programming assignments
+    and supports passing an explicit Page to auto_complete_course for zero tab collision.
+    """
+    orch = CourseOrchestrator()
+    mock_page = MagicMock()
+    mock_page.url = "https://www.coursera.org/learn/cloud-networking/programming/BmKvW"
+    mock_page.title = AsyncMock(return_value="Bandwidth Monitor")
+    mock_page.evaluate = AsyncMock(return_value={
+        "title": "Bandwidth Monitor",
+        "task_type": "file_upload",
+        "has_file_input": True,
+        "starter_files": [],
+        "latest_score": 100.0,
+        "is_passed": True,
+        "instructions_snippet": ""
+    })
+    mock_page.wait_for_selector = AsyncMock(return_value=None)
+    mock_page.locator = MagicMock(return_value=MagicMock(count=AsyncMock(return_value=0)))
+
+    # Test programming item handling
+    mock_item = {
+        "title": "Bandwidth Monitor",
+        "type": "programming",
+        "url": "https://www.coursera.org/learn/cloud-networking/programming/BmKvW"
+    }
+
+    res = await orch._solve_item_on_page(mock_page, mock_item, direct_api=None)
+    assert res["type"] == "programming"
+    assert res["status"] in ("passed", "inspected")
+    assert res["passed"] is True
+
+
+
