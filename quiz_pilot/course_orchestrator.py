@@ -29,6 +29,39 @@ class CourseOrchestrator:
         self.max_concurrency = max_concurrency
         self.attempt_mgr = FastAttemptManager()
 
+    @staticmethod
+    def _extract_questions_from_api_data(api_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Maps raw Coursera onDemandAssessments REST response into standard question schema."""
+        elem = api_data.get("elements", [api_data])[0] if isinstance(api_data.get("elements"), list) and api_data.get("elements") else api_data
+        raw_questions = (
+            elem.get("questions") or
+            elem.get("parts") or
+            elem.get("items") or
+            api_data.get("questions") or
+            api_data.get("parts") or
+            []
+        )
+        mapped = []
+        for idx, q in enumerate(raw_questions):
+            prompt = q.get("prompt") or q.get("question") or q.get("text") or q.get("title") or ""
+            raw_opts = q.get("options") or q.get("choices") or []
+            options = []
+            for o in raw_opts:
+                if isinstance(o, dict):
+                    options.append(o.get("text") or o.get("label") or o.get("val") or str(o))
+                else:
+                    options.append(str(o))
+            q_type = q.get("type", "radio")
+            q_id = q.get("id") or q.get("partId") or idx
+            mapped.append({
+                "index": idx,
+                "id": q_id,
+                "prompt": prompt,
+                "options": options,
+                "type": q_type
+            })
+        return mapped
+
     async def _solve_item_on_page(
         self,
         page,
@@ -84,11 +117,24 @@ class CourseOrchestrator:
                     if assessment_id:
                         api_data = await direct_api.fetch_assessment(assessment_id)
                         if api_data and not api_data.get("error"):
-                            sub_res = await direct_api.submit_answers(assessment_id, {})
-                            if sub_res.get("success"):
-                                item_res["status"] = "submitted_direct_api"
-                                item_res["assessment_id"] = assessment_id
-                                return item_res
+                            api_questions = self._extract_questions_from_api_data(api_data)
+                            if api_questions:
+                                api_answers = self.attempt_mgr.get_retry_answers(api_questions, quiz_id=item_title)
+                                if api_answers:
+                                    parts_payload = {}
+                                    for q in api_questions:
+                                        q_idx = q["index"]
+                                        q_id = q.get("id", q_idx)
+                                        if q_idx in api_answers:
+                                            parts_payload[str(q_id)] = api_answers[q_idx]
+
+                                    if parts_payload:
+                                        sub_res = await direct_api.submit_answers(assessment_id, parts_payload)
+                                        if sub_res.get("success"):
+                                            item_res["status"] = "submitted_direct_api"
+                                            item_res["assessment_id"] = assessment_id
+                                            item_res["questions_solved"] = len(api_questions)
+                                            return item_res
                 except Exception:
                     pass
 
@@ -97,14 +143,17 @@ class CourseOrchestrator:
             questions = await adapter.extract_questions_async()
             if questions:
                 answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=item_title)
+                # Fill answers only without inline submit
                 if hasattr(adapter, "batch_fill_answers_async"):
-                    await adapter.batch_fill_answers_async(answers, auto_submit=True)
+                    await adapter.batch_fill_answers_async(answers, auto_submit=False)
                 elif hasattr(adapter, "batch_fill_answers"):
-                    await adapter.batch_fill_answers(answers, auto_submit=True)
+                    adapter.batch_fill_answers(answers, auto_submit=False)
                 else:
                     for q in questions:
                         await adapter.fill_answer_async(q["index"], answers.get(q["index"], 0))
-                    await adapter.submit_assessment_async()
+                
+                # Explicit modal submission with confirmation dialog
+                await adapter.submit_assessment_async()
                 
                 try:
                     fb = await adapter.extract_feedback_async()
@@ -115,7 +164,7 @@ class CourseOrchestrator:
                         answers=answers,
                         feedback=fb.get("feedback", {}),
                         score_pct=fb.get("score_pct"),
-                        md_path=os.path.join(self.attempt_mgr.base_cache_dir, "quiz_analysis.md")
+                        md_path="quiz_analysis.md"
                     )
                     item_res["score_pct"] = fb.get("score_pct")
                     item_res["passed"] = fb.get("passed", False)

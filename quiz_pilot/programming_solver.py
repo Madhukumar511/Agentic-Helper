@@ -44,7 +44,7 @@ class ProgrammingAssignmentManager:
         return url_match or text_match
 
     @staticmethod
-    def find_target_page(browser: Browser, target_keyword: Optional[str] = None) -> Optional[Page]:
+    async def find_target_page(browser: Browser, target_keyword: Optional[str] = None) -> Optional[Page]:
         """Locates the active programming assignment tab."""
         all_pages = []
         for ctx in browser.contexts:
@@ -58,7 +58,12 @@ class ProgrammingAssignmentManager:
             kw = target_keyword.lower()
             for p in all_pages:
                 try:
-                    if kw in p.url.lower() or kw in p.title().lower():
+                    title = p.title()
+                    if asyncio.iscoroutine(title):
+                        title = await title
+                    title_str = (str(title) if title else "").lower()
+                    url_str = getattr(p, "url", "").lower()
+                    if kw in url_str or kw in title_str:
                         return p
                 except Exception:
                     pass
@@ -68,7 +73,8 @@ class ProgrammingAssignmentManager:
         for kw in prog_keywords:
             for p in all_pages:
                 try:
-                    if kw in p.url.lower():
+                    url_str = getattr(p, "url", "").lower()
+                    if kw in url_str:
                         return p
                 except Exception:
                     pass
@@ -177,7 +183,7 @@ class ProgrammingAssignmentManager:
 
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(self.cdp_url)
-            target = self.find_target_page(browser, tab_keyword)
+            target = await self.find_target_page(browser, tab_keyword)
             if not target:
                 return {"error": "No matching programming assignment page found."}
             return await _extract(target)
@@ -284,7 +290,7 @@ class ProgrammingAssignmentManager:
 
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(self.cdp_url)
-            target = self.find_target_page(browser, tab_keyword)
+            target = await self.find_target_page(browser, tab_keyword)
             if not target:
                 return {"success": False, "error": "No matching programming assignment page found."}
             return await _upload(target)
@@ -369,7 +375,7 @@ class ProgrammingAssignmentManager:
 
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(self.cdp_url)
-            target = self.find_target_page(browser, tab_keyword)
+            target = await self.find_target_page(browser, tab_keyword)
             if not target:
                 return {"error": "No matching programming assignment page found."}
             return await _poll_loop(target)

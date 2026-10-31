@@ -130,19 +130,18 @@ class AsyncTabScheduler:
                 else:
                     answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=title)
 
-                # 3. Fill Answers via LMS Adapter
+                # 3. Fill Answers via LMS Adapter (fill only)
                 if hasattr(adapter, "batch_fill_answers_async"):
-                    await adapter.batch_fill_answers_async(answers, auto_submit=auto_submit)
+                    await adapter.batch_fill_answers_async(answers, auto_submit=False)
                 elif hasattr(adapter, "batch_fill_answers"):
-                    await adapter.batch_fill_answers(answers, auto_submit=auto_submit)
+                    adapter.batch_fill_answers(answers, auto_submit=False)
                 else:
                     for q_idx, val in answers.items():
                         await adapter.fill_answer_async(int(q_idx), val)
-                    if auto_submit:
-                        await adapter.submit_assessment_async()
 
                 # 4. Handle Submission & Feedback
                 if auto_submit:
+                    await adapter.submit_assessment_async()
                     result["submitted"] = True
                     await asyncio.sleep(0.5)
 

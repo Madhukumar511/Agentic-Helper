@@ -262,10 +262,11 @@ def test_diagram_parser_removes_blind_selection():
 
 
 @pytest.mark.anyio
-async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path):
+async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path, monkeypatch):
     """
     Issue 6: Verifies CourseraDirectAPI wiring and fallback to DOM execution in CourseOrchestrator.
     """
+    monkeypatch.chdir(tmp_path)
     class MockAsyncPage:
         def __init__(self):
             self.url = "https://www.coursera.org/learn/cloud/exam/123/quiz"
@@ -299,14 +300,30 @@ async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path):
         "type": "quiz"
     }
 
-    # Test direct API submission
+    # Test direct API submission with mapped questions
     mock_direct_api = MagicMock()
-    mock_direct_api.fetch_assessment = AsyncMock(return_value={"id": "assessment_12345"})
+    mock_direct_api.fetch_assessment = AsyncMock(return_value={
+        "id": "assessment_12345",
+        "questions": [{"id": "part_1", "prompt": "API Q1", "options": ["X", "Y"]}]
+    })
     mock_direct_api.submit_answers = AsyncMock(return_value={"success": True, "data": {}})
 
     res_api = await orch._solve_item_on_page(page, item, direct_api=mock_direct_api)
     assert res_api["status"] == "submitted_direct_api"
     assert res_api["assessment_id"] == "assessment_12345"
+    assert mock_direct_api.submit_answers.called
+    submitted_payload = mock_direct_api.submit_answers.call_args[0][1]
+    assert submitted_payload != {}  # Never submit empty answers
+
+    # Test fall-through to DOM execution when direct API has no valid answers
+    mock_empty_api = MagicMock()
+    mock_empty_api.fetch_assessment = AsyncMock(return_value={"id": "assessment_12345", "questions": []})
+    mock_empty_api.submit_answers = AsyncMock()
+
+    res_fallthrough = await orch._solve_item_on_page(page, item, direct_api=mock_empty_api)
+    assert res_fallthrough["status"] == "submitted"
+    assert res_fallthrough["questions_solved"] == 1
+    assert not mock_empty_api.submit_answers.called
 
     # Test graceful fallback to DOM execution when direct API fails
     mock_failing_api = MagicMock()
@@ -316,3 +333,109 @@ async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path):
     assert res_dom["status"] == "submitted"
     assert res_dom["questions_solved"] == 1
     assert res_dom["score_pct"] == 100.0
+
+
+@pytest.mark.anyio
+async def test_async_tab_finders():
+    """
+    Verifies find_assessment_page and ProgrammingAssignmentManager.find_target_page
+    are async and await p.title() properly without calling .lower() on unawaited coroutines.
+    """
+    from quiz_pilot.mcp_server import find_assessment_page
+    from quiz_pilot.programming_solver import ProgrammingAssignmentManager
+
+    class MockAsyncTab:
+        def __init__(self, url, title_val):
+            self.url = url
+            self._title = title_val
+
+        async def title(self):
+            await asyncio.sleep(0.01)
+            return self._title
+
+    class MockContext:
+        def __init__(self, pages):
+            self.pages = pages
+
+    class MockBrowser:
+        def __init__(self, pages):
+            self.contexts = [MockContext(pages)]
+
+    tab1 = MockAsyncTab("https://google.com", "Search")
+    tab2 = MockAsyncTab("https://www.coursera.org/learn/cloud/quiz", "Cloud Computing Quiz")
+    tab3 = MockAsyncTab("https://www.coursera.org/learn/cloud/programming/123", "Project Assignment")
+    browser = MockBrowser([tab1, tab2, tab3])
+
+    # 1. find_assessment_page with keyword in title
+    found_page = await find_assessment_page(browser, target_keyword="Cloud")
+    assert found_page == tab2
+
+    # 2. find_assessment_page with LMS keyword
+    found_lms = await find_assessment_page(browser)
+    assert found_lms in (tab2, tab3)
+
+    # 3. find_target_page in ProgrammingAssignmentManager
+    pm = ProgrammingAssignmentManager()
+    found_prog = await pm.find_target_page(browser, target_keyword="Project")
+    assert found_prog == tab3
+
+
+def test_coursera_adapter_batch_fill_separate_from_submit():
+    """
+    Verifies batch_fill_answers only fills inputs and does not embed inline doSubmit,
+    and submit_assessment_async explicitly handles the confirmation dialog.
+    """
+    import inspect
+
+    src = inspect.getsource(CourseraAdapter.batch_fill_answers)
+    assert "doSubmit" not in src
+    assert "([ansMap])" in src
+
+    src_async = inspect.getsource(CourseraAdapter.submit_assessment_async)
+    assert "asyncio.sleep(0.5)" in src_async
+
+
+def test_coursera_adapter_prevent_runaway_dom_traversal():
+    """
+    Verifies extract_questions restricts upward traversal to question boundary selectors
+    (div[data-testid='part-submission-container'], div.rc-Formulation, fieldset, form)
+    and does not assign document.body.innerText.
+    """
+    import inspect
+
+    src = inspect.getsource(CourseraAdapter.extract_questions)
+    assert "boundarySelectors" in src
+    assert "part-submission-container" in src
+    assert "rc-Formulation" in src
+    assert "document.body" in src
+    assert "boundaryElem" in src
+
+
+def test_quiz_analysis_preserved_across_purge_all(tmp_path):
+    """
+    Verifies that quiz_analysis.md in workspace root is preserved even after
+    FastAttemptManager.purge_all() wipes .assessment_cache/.
+    """
+    cache_dir = str(tmp_path / "cache")
+    mgr = FastAttemptManager(base_cache_dir=cache_dir)
+
+    root_md = str(tmp_path / "quiz_analysis.md")
+    mgr.record_attempt(
+        quiz_id="persist_test",
+        attempt_num=1,
+        questions=[{"index": 0, "prompt": "Persist Q", "options": ["A"]}],
+        answers={0: 0},
+        feedback={0: True},
+        md_path=root_md
+    )
+    assert os.path.exists(root_md)
+    assert os.path.exists(os.path.join(cache_dir, "quiz_analysis.md"))
+
+    # Purge all temporary cache
+    mgr.purge_all()
+
+    # Cache folder files are purged
+    assert not os.path.exists(os.path.join(cache_dir, "quiz_analysis.md"))
+    # Workspace root quiz_analysis.md is preserved!
+    assert os.path.exists(root_md)
+

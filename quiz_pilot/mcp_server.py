@@ -504,7 +504,7 @@ TOOLS = [
 ]
 
 
-def find_assessment_page(browser, target_keyword: Optional[str] = None):
+async def find_assessment_page(browser, target_keyword: Optional[str] = None):
     """
     Finds the active assessment page across all browser contexts and tabs.
     Prioritizes:
@@ -524,7 +524,12 @@ def find_assessment_page(browser, target_keyword: Optional[str] = None):
         kw = target_keyword.lower()
         for p in all_pages:
             try:
-                if kw in p.url.lower() or kw in p.title().lower():
+                title = p.title()
+                if asyncio.iscoroutine(title):
+                    title = await title
+                title_str = (str(title) if title else "").lower()
+                url_str = getattr(p, "url", "").lower()
+                if kw in url_str or kw in title_str:
                     return p
             except Exception:
                 pass
@@ -537,7 +542,12 @@ def find_assessment_page(browser, target_keyword: Optional[str] = None):
     for kw in lms_keywords:
         for p in all_pages:
             try:
-                if kw in p.url.lower() or kw in p.title().lower():
+                title = p.title()
+                if asyncio.iscoroutine(title):
+                    title = await title
+                title_str = (str(title) if title else "").lower()
+                url_str = getattr(p, "url", "").lower()
+                if kw in url_str or kw in title_str:
                     return p
             except Exception:
                 pass
@@ -651,7 +661,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
     if name == "submit_peer_assignment":
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(cdp_url)
-            page = find_assessment_page(browser, arguments.get("tab_keyword"))
+            page = await find_assessment_page(browser, arguments.get("tab_keyword"))
             if not page:
                 return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
             prm = PeerReviewManager(page)
@@ -665,7 +675,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
     if name == "complete_peer_reviews":
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(cdp_url)
-            page = find_assessment_page(browser, arguments.get("tab_keyword"))
+            page = await find_assessment_page(browser, arguments.get("tab_keyword"))
             if not page:
                 return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
             prm = PeerReviewManager(page)
@@ -676,7 +686,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
     if name == "auto_solve_current_assignment":
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(cdp_url)
-            page = find_assessment_page(browser, arguments.get("tab_keyword"))
+            page = await find_assessment_page(browser, arguments.get("tab_keyword"))
             if not page:
                 return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
             
@@ -705,7 +715,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
     if name == "crawl_syllabus":
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(cdp_url)
-            page = find_assessment_page(browser)
+            page = await find_assessment_page(browser)
             if not page:
                 return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
             crawler = SyllabusCrawler(page=page)
@@ -740,7 +750,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         except Exception as e:
             return {"isError": True, "content": [{"type": "text", "text": f"CDP Connection failed: {e}. Ensure browser launched with --remote-debugging-port=9222"}]}
 
-        page = find_assessment_page(browser, arguments.get("tab_keyword"))
+        page = await find_assessment_page(browser, arguments.get("tab_keyword"))
         if not page:
             return {"isError": True, "content": [{"type": "text", "text": "No browser tabs open. Please open your quiz in the browser."}]}
 

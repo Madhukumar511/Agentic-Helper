@@ -24,14 +24,28 @@ class CourseraAdapter(BaseLMSAdapter):
             let leafGroups = allGroups.filter(g => !allGroups.some(other => other !== g && g.contains(other)));
             
             return leafGroups.map((g, idx) => {
-                let p = g;
-                while (p && !p.innerText.includes("Question") && p !== document.body) {
-                    p = p.parentElement;
+                // Restrict upward traversal to known question containers; prevent runaway traversal to document.body
+                const boundarySelectors = 'div[data-testid="part-submission-container"], div.rc-Formulation, fieldset, form';
+                let p = g.closest ? g.closest(boundarySelectors) : null;
+                if (!p) {
+                    let cur = g.parentElement;
+                    while (cur && cur !== document.body) {
+                        if (cur.matches && cur.matches(boundarySelectors)) {
+                            p = cur;
+                            break;
+                        }
+                        if (cur.innerText && cur.innerText.includes("Question")) {
+                            p = cur;
+                            break;
+                        }
+                        cur = cur.parentElement;
+                    }
                 }
                 
-                let fullText = p ? p.innerText : g.innerText;
+                let boundaryElem = (p && p !== document.body) ? p : g;
+                let fullText = (boundaryElem.innerText || g.innerText || '').trim();
                 // Preserve MathJax/KaTeX formulas and SVG formula labels
-                let mathEls = Array.from((p || g).querySelectorAll('annotation[encoding*="tex"], .katex-html, svg[aria-label]'));
+                let mathEls = Array.from(boundaryElem.querySelectorAll('annotation[encoding*="tex"], .katex-html, svg[aria-label]'));
                 mathEls.forEach(m => {
                     let mathVal = m.getAttribute('aria-label') || m.textContent || '';
                     if (mathVal && !fullText.includes(mathVal)) {
@@ -182,7 +196,7 @@ class CourseraAdapter(BaseLMSAdapter):
         Optionally signs honor code and triggers submission immediately.
         """
         payload = {str(k): v for k, v in answers.items()}
-        results = self.page.evaluate('''([ansMap, doSubmit]) => {
+        results = self.page.evaluate('''([ansMap]) => {
             let norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
             let allGroups = Array.from(document.querySelectorAll('div[role="radiogroup"], div[role="group"]'));
             let leafGroups = allGroups.filter(g => !allGroups.some(other => other !== g && g.contains(other)));
@@ -268,52 +282,28 @@ class CourseraAdapter(BaseLMSAdapter):
                 fillRes[idx] = ok;
             }
 
-            if (doSubmit) {
-                // 1. Dismiss leftover dialogs
-                let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
-                if (cancelBtn) cancelBtn.click();
-
-                // 2. Check Honor Code checkbox
-                let cb = document.querySelector('#agreement-checkbox-base, input[name*="agreement" i]') ||
-                         Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).find(c => {
-                             let l = (c.closest('label') || c.parentElement || {}).innerText || '';
-                             return l.toLowerCase().includes('understand and agree') || l.toLowerCase().includes('honor code');
-                         });
-                if (cb && !cb.checked) {
-                    let lbl = cb.closest('label') || cb.parentElement;
-                    if (lbl) lbl.click();
-                    else cb.click();
-                    if (!cb.checked) {
-                        cb.checked = true;
-                        cb.dispatchEvent(new Event('change', { bubbles: true }));
-                        cb.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                }
-
-                // 3. Click Submit button
-                let submitBtn = document.querySelector('[data-testid="submit-button"], button.submit-button') ||
-                                Array.from(document.querySelectorAll('button')).find(b => 
-                                    b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
-                                );
-                if (submitBtn) {
-                    submitBtn.click();
-                }
-
-                // 4. Dismiss confirmation modal if present
-                let dialog = document.querySelector('div[role="dialog"], [data-testid="assignment-view-tunnel-vision"]');
-                if (dialog) {
-                    let confirmBtn = Array.from(dialog.querySelectorAll('button')).find(b => {
-                        let t = b.innerText.trim().toLowerCase();
-                        return t === 'submit' || t === 'continue' || t === 'yes';
-                    });
-                    if (confirmBtn) confirmBtn.click();
-                }
-            }
-
             return fillRes;
-        }''', [payload, auto_submit])
+        }''', [payload])
+
+        if auto_submit:
+            self.submit_assessment()
 
         return results
+
+    async def batch_fill_answers_async(self, answers: Dict[Any, Any], auto_submit: bool = False) -> Dict[str, Any]:
+        """
+        Asynchronously fills batch answers in DOM and optionally triggers async submission.
+        """
+        res = self.batch_fill_answers(answers, auto_submit=False)
+        if asyncio.iscoroutine(res):
+            fill_res = await res
+        else:
+            fill_res = res
+
+        if auto_submit:
+            await self.submit_assessment_async()
+
+        return fill_res
 
     def submit_assessment(self) -> bool:
         """Atomic submission: checks honor code, clicks submit, and confirms dialog."""
