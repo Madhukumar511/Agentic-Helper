@@ -136,14 +136,17 @@ flowchart TD
 
 ## 🗂️ Concurrent Multi-Tab & Specialization Worker
 
-Agentic-Helper features an **Async Multi-Tab Queue Scheduler** (`AsyncTabScheduler`). You can open 3, 4, or 5 course quizzes in separate browser tabs and solve them simultaneously:
+Agentic-Helper features an **Async Multi-Tab Queue Scheduler** (`AsyncTabScheduler`). It **NEVER runs sequentially in a single tab**:
+- **Specialization Course (`/specializations/<slug>`)**: Discovers child courses, opens **each child course in its own background tab simultaneously**, and completes all courses concurrently in parallel in under 30 minutes!
+- **Single Course (Not a Specialization) (`/learn/<slug>`)**: Discovers incomplete modules and opens **different module assignments in separate browser tabs simultaneously** (Week 1, Week 2, Week 3, Week 4 Quizzes), completing all modules in parallel!
+- **Already Open Tabs**: Automatically processes and solves all open assessment tabs simultaneously.
 
 ```bash
-# 1. Open multiple course or quiz URLs into tabs and solve them in parallel:
-agentic-helper multiworker <url1> <url2> <url3> --concurrency 3
-
-# 2. Or solve all assessment tabs already open in your browser:
+# 1. Automatic smart multiworker (auto-detects specialization child courses or course modules):
 agentic-helper multiworker --concurrency 4
+
+# 2. Open specific URLs into tabs and solve them concurrently:
+agentic-helper multiworker <url1> <url2> <url3> --concurrency 3
 ```
 
 ### Solving an Entire Specialization (e.g. First 4 Courses):

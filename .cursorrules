@@ -1,5 +1,9 @@
 # Cursor Rules for Agentic-Helper
 
+- Rule 0 (Mandatory Parallel Multi-Tab Workers): NEVER solve sequentially one-by-one in a single tab!
+  * If Specialization (`/specializations/<slug>`): Open EACH child course in its own browser tab simultaneously and complete all child courses concurrently in parallel!
+  * If Single Course (`/learn/<slug>`): Open different module assignments in separate browser tabs simultaneously (Week 1, Week 2, Week 3, Week 4 Quizzes) and solve all modules concurrently in parallel!
+  * Universal execution: `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or MCP tool `smart_multiworker()`.
 - Rule 1 (Zero-Scratch Files): NEVER write one-off course scripts (e.g. solve_*.py, check.py) to disk. All quiz solving must run in-memory via CourseraAdapter, FastAttemptManager, or MCP tools.
 - Rule 2 (Windows Browser Launcher): Use `ensure_browser(url=course_url, port=9222)`. It automatically launches Edge/Chrome and navigates to the target URL even if the browser is already running on port 9222.
 - Rule 3 (Mandatory quiz_analysis.md Failure Memory & Option Elimination):

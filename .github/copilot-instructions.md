@@ -1,5 +1,9 @@
 # GitHub Copilot Instructions for Agentic-Helper
 
+- **Mandatory Parallel Multi-Tab Workers**: NEVER solve sequentially one-by-one in a single tab!
+  - If Specialization (`/specializations/<slug>`): Open EACH child course in its own browser tab simultaneously and complete all child courses in parallel concurrently in under 30 minutes!
+  - If Single Course (`/learn/<slug>`): Open different module assignments in separate browser tabs simultaneously (Week 1, Week 2, Week 3, Week 4 Quizzes) and solve all modules in parallel concurrently!
+  - Universal execution: Call `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or MCP tool `smart_multiworker()`.
 - **Zero-Scratch File Directive**: Never generate one-off scripts like `solve_*.py` or `check.py`. Execute all operations in-memory using `quiz_pilot.lms_adapters`, `quiz_pilot.attempt_protector`, or native MCP tools.
 - **Windows Browser Launch & Navigation**: Call `quiz_pilot.browser_launcher.ensure_browser(url, port=9222)`. It automatically opens the browser and navigates to the URL even if the browser is already listening on port 9222.
 - **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:

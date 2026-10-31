@@ -13,6 +13,14 @@ The human user does **NOT** need to run any terminal commands or install anythin
 > Agents must **NEVER** write one-off Python scripts (e.g. `solve_hw1.py`, `quiz.py`, `check.py`, `dump.py`) to disk!
 > The entire engine is already pre-built in `quiz_pilot`. All operations must execute **in-memory** directly via Playwright CDP, `CourseraAdapter`, `FastAttemptManager`, or native MCP tools. The repository must remain completely pristine.
 
+> [!IMPORTANT]
+> **MANDATORY PARALLEL MULTI-TAB DISPATCH DIRECTIVE (ALL AGENTS & PLATFORMS)**
+> Whenever `/agentic-helper` is invoked on Windows, macOS, or Linux, **NEVER solve sequentially one-by-one in a single tab!**
+> Agents **MUST** inspect the course type and immediately execute multi-tab parallel workers:
+> - **Specialization Course (`/specializations/<slug>`)**: Open **EACH child course in its own browser tab simultaneously** and complete all child courses in parallel concurrently!
+> - **Single Course (`/learn/<slug>`)**: Open **different module assignments in separate browser tabs simultaneously** (Week 1, Week 2, Week 3, Week 4 Quizzes) and complete all modules in parallel concurrently!
+> - **Universal 1-Line Execution**: `smart_multiworker_sync(max_concurrency=4)` (or MCP `smart_multiworker()`, or CLI `agentic-helper multiworker --concurrency 4`). Specializations must finish in under 30 minutes!
+
 ---
 
 ## ⚡ Zero-Touch Autonomous Execution Protocol
@@ -53,40 +61,49 @@ Connect to the browser over CDP:
 
 ---
 
-### Phase 3: Autonomous Course Crawl & Quiz Execution
-Once logged in:
-1. **Find Active Assessment Tab**:
-   ```python
-   from playwright.sync_api import sync_playwright
-   from quiz_pilot.lms_adapters import get_lms_adapter
-   from quiz_pilot.attempt_protector import FastAttemptManager
+### Phase 3: The Parallel Multi-Tab Execution Engine (Specialization vs Single Course)
+Once logged in, **NEVER solve sequentially one-by-one in a single tab!**
+Agents **MUST** immediately inspect the course type and parallelize across browser tabs:
 
-   with sync_playwright() as p:
-       browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-       
-       page = None
-       lms_keywords = ["coursera", "canvas", "moodle", "blackboard", "exam", "quiz", "assessment", "forms"]
-       for ctx in browser.contexts:
-           for p_tab in ctx.pages:
-               try:
-                   if any(k in p_tab.url.lower() or k in p_tab.title().lower() for k in lms_keywords):
-                       page = p_tab
-                       break
-               except Exception:
-                   pass
-           if page:
-               break
-       if not page and browser.contexts and browser.contexts[0].pages:
-           page = browser.contexts[0].pages[0]
-   ```
+#### 🌟 Case A: If it is a Specialization (`/specializations/<spec-slug>` or multi-course track)
+- Discover all child courses in the specialization via `SyllabusCrawler`.
+- **Open EACH child course in its own browser tab simultaneously** (up to 4 parallel tabs).
+- Execute all child courses **in parallel concurrently** until the entire specialization is completed!
+- Finish specializations in under 30 minutes!
 
-2. **Auto-Detect Platform & Extract Questions**:
+#### 📚 Case B: If it is a Single Course (`/learn/<course-slug>`)
+- Crawl the syllabus to extract all incomplete modules and assignments (Week 1, Week 2, Week 3, Week 4...).
+- **Open EACH module assignment in its own browser tab simultaneously** (up to `max_concurrency: 4`).
+- Execute all module quizzes **in parallel concurrently** so all weeks finish at once!
+
+#### 🌐 Case C: If Multiple Assessment Tabs are Already Open
+- Immediately process and solve all open tabs in parallel!
+
+#### 🚀 1-Line Universal Execution (Auto-Detects Specialization vs Single Course):
+In Python / Direct script:
+```python
+from quiz_pilot.tab_scheduler import smart_multiworker_sync
+
+# Automatically inspects active page:
+# - If Specialization -> opens child courses in parallel tabs & completes concurrently
+# - If Single Course -> opens module quizzes in parallel tabs & completes concurrently
+# - If multiple tabs already open -> completes all open tabs concurrently
+results = smart_multiworker_sync(max_concurrency=4, auto_submit=True)
+print(f"Passed {results.get('passed_count', 0)} tasks concurrently across tabs!")
+```
+*(Or via MCP: `smart_multiworker(concurrency=4, auto_submit=True)`, or CLI: `agentic-helper multiworker --concurrency 4`)*
+
+---
+
+### Phase 4: Tab Worker Solving & Option Elimination Protocol
+Inside each parallel worker tab:
+1. **Auto-Detect Platform & Extract Questions**:
    ```python
    adapter = get_lms_adapter(page)
    questions = adapter.extract_questions()
    ```
 
-3. **Fast Diagram & Batch Answering (<150ms)**:
+2. **Fast Diagram & Batch Answering (<150ms)**:
    - When questions contain diagrams, figures, or network topologies:
      - Check `q['diagram_meta']` or prompt `[Figure: ...]` text for immediate topology/spacetime descriptions.
      - Call `solve_diagram(image_path=img_url, question_prompt=prompt, options=options)` to get the analytical solution in `<100ms`.
@@ -94,11 +111,11 @@ Once logged in:
    - Fill all answers in a single atomic batch via `adapter.batch_fill_answers(answers, auto_submit=True)` or `solve_batch(answers, auto_submit=True)`.
    - Immediately verify grade via `adapter.extract_feedback()`.
 
-4. **Pass & Zero-Artifact Purge**:
+3. **Pass & Zero-Artifact Purge**:
    - When passed ($\ge 80\%$ or green pass banner), run `FastAttemptManager().purge_all()`.
    - Never leave any `solve_*.py`, JSON dumps, or temporary files on disk.
 
-5. **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:
+4. **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:
    - If an attempt scores $< 100\%$ or fails, agents **MUST** immediately create or update `quiz_analysis.md`:
      ```python
      attempt_mgr.record_attempt(

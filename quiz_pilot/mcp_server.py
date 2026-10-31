@@ -215,6 +215,25 @@ TOOLS = [
         }
     },
     {
+        "name": "smart_multiworker",
+        "description": "Universal parallel executor: auto-detects whether the page is a Specialization (opens child courses in parallel tabs) or a Single Course (opens module quizzes across parallel tabs) and completes all tasks concurrently.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "concurrency": {
+                    "type": "integer",
+                    "description": "Maximum concurrent browser tabs (default: 4)",
+                    "default": 4
+                },
+                "auto_submit": {
+                    "type": "boolean",
+                    "description": "Whether to auto-submit quizzes (default: true)",
+                    "default": True
+                }
+            }
+        }
+    },
+    {
         "name": "solve_parallel_quizzes",
         "description": "Executes concurrent multi-tab quiz solving across all open assessment tabs using isolated async workers.",
         "inputSchema": {
@@ -566,8 +585,8 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         tabs = await scheduler.inspect_all_tabs()
         return {"content": [{"type": "text", "text": json.dumps(tabs, indent=2)}]}
 
-    if name == "solve_parallel_quizzes":
-        concurrency = int(arguments.get("max_concurrency", 4))
+    if name in ("solve_parallel_quizzes", "smart_multiworker"):
+        concurrency = int(arguments.get("concurrency") or arguments.get("max_concurrency") or 4)
         auto_sub = arguments.get("auto_submit", True)
         scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=concurrency)
         batch_results = await scheduler.smart_multiworker(auto_submit=auto_sub)

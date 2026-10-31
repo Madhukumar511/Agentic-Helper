@@ -8,6 +8,12 @@ Enforces zero human terminal setup, multi-tab parallel workers, and self-healing
 
 ## ⚡ Immutable Agent Laws (NEVER VIOLATE)
 
+### 0. ⚡ Mandatory Parallel Multi-Tab Mandate (Specialization vs Single Course)
+- **NEVER solve sequentially one-by-one in a single tab!**
+- **Specialization Course (`/specializations/<slug>`)**: Open **EACH child course in its own browser tab simultaneously** and complete all child courses in parallel concurrently in under 30 minutes!
+- **Single Course (`/learn/<slug>`)**: Open **different module assignments in separate browser tabs simultaneously** (Week 1, Week 2, Week 3, Week 4 Quizzes) and solve all modules in parallel concurrently!
+- **Universal Execution**: Call `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or MCP tool `smart_multiworker()`.
+
 ### 1. 🚫 Zero Scratch File Law
 - **NEVER** write one-off Python scripts (e.g. `solve_hw1.py`, `quiz.py`, `check.py`, `dump.py`) to disk!
 - The entire engine is pre-built in `quiz_pilot`. Execute all operations **in-memory** directly via Playwright CDP, `CourseraAdapter`, `FastAttemptManager`, or native MCP tools.

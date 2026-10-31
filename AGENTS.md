@@ -67,6 +67,25 @@ with sync_playwright() as p:
 
 ## ⚡ The 3-Attempt Speed Law & Zero-Artifact Directive (CRITICAL AGENT RULES)
 
+### Rule 0: Mandatory Parallel Multi-Tab Execution (Specialization vs Single Course)
+**CRITICAL DIRECTIVE FOR ALL AGENTS ON ALL PLATFORMS (WINDOWS, MACOS, LINUX):**
+**NEVER** crawl or solve assignments sequentially one-by-one in a single tab!
+Whenever `/agentic-helper` or an assessment completion request is triggered:
+1. **If Target is a Specialization Course (`/specializations/<slug>`)**:
+   - Discover all child courses in the specialization.
+   - **Open EACH child course in its own browser tab simultaneously** (up to 4 concurrent tabs).
+   - Solve and complete all courses concurrently in parallel! Entire specialization must finish in under 30 minutes!
+2. **If Target is a Single Course (Not a Specialization) (`/learn/<slug>`)**:
+   - Crawl the syllabus to extract all incomplete modules and assignments.
+   - **Open EACH module assignment in its own browser tab simultaneously** (Week 1, Week 2, Week 3, Week 4 Quizzes).
+   - Solve and complete all module quizzes concurrently in parallel!
+3. **Universal 1-Line Invocation**:
+   ```python
+   from quiz_pilot.tab_scheduler import smart_multiworker_sync
+   results = smart_multiworker_sync(max_concurrency=4, auto_submit=True)
+   ```
+   *(Or via MCP tool: `smart_multiworker(concurrency=4)`, or CLI: `agentic-helper multiworker --concurrency 4`)*
+
 ### Rule 1: ZERO Scratch File Creation (No Course-Specific Scripts)
 * **DO NOT** create one-off Python scripts (such as `solve_c2_hw1.py`, `inspect_submit.py`, `check_grade.py`) in the repository or workspace!
 * The entire engine is already built into `quiz_pilot` and the MCP server.

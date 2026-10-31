@@ -142,7 +142,25 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 
 ---
 
-## 🛠️ 5. Windows Troubleshooting
+## ⚡ 5. Windows Multi-Tab Parallel Execution: Specialization vs Single Course
+When `/agentic-helper` runs on Windows, it **NEVER solves sequentially in one tab**:
+1. **Specialization Course (`/specializations/<slug>`)**:
+   - Automatically opens **each child course in its own background browser tab simultaneously** and solves all courses in parallel concurrently in under 30 minutes!
+2. **Single Course (Not a Specialization) (`/learn/<slug>`)**:
+   - Automatically opens **different module assignments in separate browser tabs simultaneously** (Week 1, Week 2, Week 3, Week 4 Quizzes) and solves all modules concurrently in parallel!
+3. **Execution**:
+   ```powershell
+   agentic-helper multiworker --concurrency 4
+   ```
+   Or in Python:
+   ```python
+   from quiz_pilot.tab_scheduler import smart_multiworker_sync
+   smart_multiworker_sync(max_concurrency=4)
+   ```
+
+---
+
+## 🛠️ 6. Windows Troubleshooting
 
 | Issue | Cause | Solution |
 | :--- | :--- | :--- |
