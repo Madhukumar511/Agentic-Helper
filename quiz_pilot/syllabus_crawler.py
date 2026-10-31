@@ -115,3 +115,54 @@ class SyllabusCrawler:
             "all_items": deduped,
             "execution_plan": incomplete
         }
+
+    def crawl_specialization_courses(self, spec_slug_or_url: str) -> List[Dict[str, str]]:
+        """
+        Crawls a Coursera Specialization page and extracts all child courses in sequence.
+        Returns a list of dicts: [{"title": "Course Name", "slug": "course-slug", "url": "https://..."}]
+        """
+        if not self.page:
+            raise ValueError("No active browser page attached.")
+
+        if "coursera.org" in spec_slug_or_url:
+            target_url = spec_slug_or_url
+        else:
+            clean_slug = spec_slug_or_url.strip("/ ")
+            target_url = f"https://www.coursera.org/specializations/{clean_slug}"
+
+        current_url = getattr(self.page, "url", "")
+        if target_url not in current_url:
+            self.page.evaluate("(u) => window.location.href = u", target_url)
+            time.sleep(4)
+
+        try:
+            self.page.wait_for_selector("a[href*=\"/learn/\"], h3", timeout=12000)
+            time.sleep(1)
+        except Exception:
+            pass
+
+        courses = self.page.evaluate('''() => {
+            const courseLinks = Array.from(document.querySelectorAll('a[href*="/learn/"]'));
+            const results = [];
+            const seen = new Set();
+            
+            courseLinks.forEach(a => {
+                const match = a.href.match(/\\/learn\\/([a-zA-Z0-9_-]+)/);
+                if (match) {
+                    const slug = match[1];
+                    const cleanHref = "https://www.coursera.org/learn/" + slug;
+                    if (!seen.has(cleanHref) && !slug.includes("home") && !slug.includes("welcome")) {
+                        seen.add(cleanHref);
+                        const heading = a.querySelector('h3, h4, strong') || a;
+                        const title = heading ? heading.innerText.trim().split('\\n')[0] : slug;
+                        results.push({
+                            title: title,
+                            slug: slug,
+                            url: cleanHref
+                        });
+                    }
+                }
+            });
+            return results;
+        }''')
+        return courses

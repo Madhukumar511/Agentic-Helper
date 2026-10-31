@@ -126,3 +126,44 @@ class CourseOrchestrator:
                 "total_processed": len(results),
                 "items": results
             }
+
+    async def auto_complete_specialization(
+        self,
+        spec_url: str,
+        max_courses: Optional[int] = None,
+        prefer_direct_api: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Discovers all courses in a Specialization, slices the requested count (e.g. first 4),
+        opens their assignments across tabs, and completes them concurrently.
+        """
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(self.cdp_url)
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = context.pages[0] if context.pages else await context.new_page()
+
+            crawler = SyllabusCrawler(page=page)
+            all_courses = crawler.crawl_specialization_courses(spec_url)
+            if not all_courses:
+                return {"error": f"No courses found on specialization page: {spec_url}"}
+
+            target_courses = all_courses[:max_courses] if max_courses else all_courses
+
+            course_results = []
+            for c in target_courses:
+                res = await self.auto_complete_course(
+                    course_url=c["url"],
+                    prefer_direct_api=prefer_direct_api
+                )
+                course_results.append({
+                    "course_title": c.get("title"),
+                    "course_url": c.get("url"),
+                    "result": res
+                })
+
+            return {
+                "specialization": spec_url,
+                "total_courses_in_spec": len(all_courses),
+                "courses_completed": len(course_results),
+                "details": course_results
+            }

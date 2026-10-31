@@ -423,6 +423,34 @@ TOOLS = [
             },
             "required": ["course_url"]
         }
+    },
+    {
+        "name": "auto_complete_specialization",
+        "description": "Autonomously discovers all courses in a Specialization, slices the requested count (e.g. first 4), opens tabs, and completes them concurrently in parallel.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "specialization_url": {
+                    "type": "string",
+                    "description": "Specialization URL or slug (e.g. 'cloud-computing' or full URL)"
+                },
+                "max_courses": {
+                    "type": "integer",
+                    "description": "Number of initial courses to complete (e.g. 4 for first 4 courses)"
+                },
+                "max_concurrency": {
+                    "type": "integer",
+                    "description": "Max parallel workers (default: 4)",
+                    "default": 4
+                },
+                "cdp_url": {
+                    "type": "string",
+                    "description": "CDP URL (default: http://127.0.0.1:9222)",
+                    "default": "http://127.0.0.1:9222"
+                }
+            },
+            "required": ["specialization_url"]
+        }
     }
 ]
 
@@ -616,6 +644,17 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         res = await orchestrator.auto_complete_course(
             course_url=arguments["course_url"],
             prefer_direct_api=pref_direct
+        )
+        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+
+    if name == "auto_complete_specialization":
+        spec_url = arguments["specialization_url"]
+        max_c = arguments.get("max_courses")
+        concurrency = int(arguments.get("max_concurrency", 4))
+        orchestrator = CourseOrchestrator(cdp_url=cdp_url, max_concurrency=concurrency)
+        res = await orchestrator.auto_complete_specialization(
+            spec_url=spec_url,
+            max_courses=max_c
         )
         return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
 
