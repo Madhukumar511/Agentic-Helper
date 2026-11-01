@@ -775,16 +775,77 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         elif name == "solve_batch":
             answers = arguments["answers"]
             auto_sub = arguments.get("auto_submit", False)
+            # 80% FLOOR on this path too (previously solve_batch auto-submitted
+            # with NO gate at all). The floor is a wasted-attempt guard, NOT
+            # a score target - the target is the maximum grade, every
+            # question genuinely answered. When auto_submit is requested, count the
+            # questions first; if the supplied answers cover < 80% of them,
+            # fill the known answers only and DO NOT submit (0 attempts used).
+            gate_blocked = False
+            coverage_pct = None
+            total_q = 0
+            unknown_detail = []
+            _qs = []
+            if auto_sub:
+                try:
+                    if hasattr(adapter, "extract_questions_async"):
+                        _qs = await adapter.extract_questions_async()
+                    elif hasattr(adapter, "extract_questions"):
+                        _qs = adapter.extract_questions()
+                        if asyncio.iscoroutine(_qs):
+                            _qs = await _qs
+                    else:
+                        _qs = []
+                    total_q = len(_qs or [])
+                except Exception:
+                    total_q = 0
+                if total_q:
+                    coverage_pct = round(100.0 * len(answers) / total_q, 1)
+                    if coverage_pct < 80.0:
+                        gate_blocked = True
+                        _answered = set()
+                        for _k in answers:
+                            try:
+                                _answered.add(int(_k))
+                            except (TypeError, ValueError):
+                                pass
+                        # The unknown questions go back to the agent WITH
+                        # their text: solving them is the agent's job (the
+                        # human never does a quiz). It works them out and
+                        # re-calls solve_batch with the merged full set -
+                        # still the same single attempt, nothing submitted yet.
+                        for _q in (_qs or []):
+                            _qi = _q.get("index", 0)
+                            if _qi not in _answered:
+                                unknown_detail.append({
+                                    "index": _qi,
+                                    "prompt": _q.get("prompt", ""),
+                                    "options": [
+                                        (o.get("text", "") if isinstance(o, dict) else str(o))
+                                        for o in _q.get("options", [])
+                                    ],
+                                })
+            fill_auto = auto_sub and not gate_blocked
             if hasattr(adapter, "batch_fill_answers_async"):
-                results = await adapter.batch_fill_answers_async(answers, auto_submit=auto_sub)
+                results = await adapter.batch_fill_answers_async(answers, auto_submit=fill_auto)
             elif hasattr(adapter, "batch_fill_answers"):
-                results = adapter.batch_fill_answers(answers, auto_submit=auto_sub)
+                results = adapter.batch_fill_answers(answers, auto_submit=fill_auto)
             else:
                 results = {}
                 for q_idx, val in answers.items():
                     results[str(q_idx)] = await adapter.fill_answer_async(int(q_idx), val)
-                if auto_sub:
+                if fill_auto:
                     await adapter.submit_assessment_async()
+            if gate_blocked:
+                return {"content": [{"type": "text", "text": json.dumps({
+                    "submitted": False,
+                    "status": "NEEDS_REVIEW_NOT_SUBMITTED",
+                    "coverage_pct": coverage_pct,
+                    "unknown_count": total_q - len(answers),
+                    "unknown_questions": unknown_detail,
+                    "message": "Known answers cover < 80% of questions: filled known answers only, did NOT submit (no attempt used). Solve or review the unknown questions, then submit.",
+                    "fill_results": results
+                }, separators=(",", ":"))}]}
             return {"content": [{"type": "text", "text": json.dumps(results, indent=2)}]}
 
         elif name == "submit_assessment":

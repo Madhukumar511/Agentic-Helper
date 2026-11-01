@@ -25,6 +25,22 @@ LMS_KEYWORDS = [
 ]
 
 
+def _unknown_details(questions, unknown_indices):
+    """Full prompt + option texts for unknown questions, so the driving
+    agent can SOLVE them itself (its job) and complete the quiz in the
+    same run - the human never does a quiz, and blind fills stay banned."""
+    wanted = set(unknown_indices)
+    details = []
+    for q in questions:
+        idx = q.get("index", 0)
+        if idx in wanted:
+            opts = []
+            for o in q.get("options", []):
+                opts.append(o.get("text", "") if isinstance(o, dict) else str(o))
+            details.append({"index": idx, "prompt": q.get("prompt", ""), "options": opts})
+    return details
+
+
 class AsyncTabScheduler:
     """
     Asynchronous Concurrent Multi-Tab Scheduler for Autonomous Assessment Automation.
@@ -163,11 +179,18 @@ class AsyncTabScheduler:
                 else:
                     answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=quiz_key)
 
-                # Guarantee 100% of questions are answered (never leave any question unanswered)
-                for q in questions:
-                    q_idx = q.get("index", 0)
-                    if q_idx not in answers and str(q_idx) not in answers:
-                        answers[q_idx] = 0
+                # NO GUESSING: questions without a known answer stay
+                # UNANSWERED and are reported (previously default-filled
+                # with option 0 - a silent coin flip on a real attempt).
+                _known = {
+                    q.get("index", 0) for q in questions
+                    if q.get("index", 0) in answers or str(q.get("index", 0)) in answers
+                }
+                unknown_indices = [q.get("index", 0) for q in questions if q.get("index", 0) not in _known]
+                coverage = (len(_known) / len(questions)) if questions else 0.0
+                result["coverage_pct"] = round(coverage * 100, 1)
+                result["unknown_questions"] = unknown_indices
+                result["unknown_questions_detail"] = _unknown_details(questions, unknown_indices)
 
                 # 3. Fill Answers via LMS Adapter (fill only)
                 if hasattr(adapter, "batch_fill_answers_async"):
@@ -178,8 +201,18 @@ class AsyncTabScheduler:
                     for q_idx, val in answers.items():
                         await adapter.fill_answer_async(int(q_idx), val)
 
-                # 4. Handle Submission & Feedback
-                if auto_submit:
+                # 4. Handle Submission & Feedback - 80% FLOOR + SINGLE ATTEMPT:
+                # the floor only stops a wasted submission; it is NOT a score
+                # target. The target is the maximum grade: every question the
+                # agent can genuinely answer must be answered before this.
+                # Submit only when known answers cover >= 80% of questions.
+                # Below the gate the known answers stay filled, NOTHING is
+                # submitted (zero attempts burned), and the run reports the
+                # uncertain questions instead of gambling an attempt on them.
+                if auto_submit and coverage < 0.80:
+                    result["status"] = "NEEDS_REVIEW_NOT_SUBMITTED"
+                    result["submitted"] = False
+                elif auto_submit:
                     await adapter.submit_assessment_async()
                     result["submitted"] = True
                     await asyncio.sleep(0.5)
@@ -200,7 +233,7 @@ class AsyncTabScheduler:
                             fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
                         self.attempt_mgr.record_attempt(
                             quiz_id=quiz_key,
-                            attempt_num=1,
+                            attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
                             questions=questions,
                             answers=answers,
                             feedback=fb_map,

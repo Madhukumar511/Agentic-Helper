@@ -377,6 +377,22 @@ class FastAttemptManager:
 
         return self.export_quiz_analysis_markdown(quiz_id=quiz_id, md_path=md_path)
 
+    def next_attempt_num(self, quiz_id: str) -> int:
+        """Next attempt number for a quiz, derived from its saved attempt
+        files (1-based). Replaces the hardcoded attempt_num=1 that callers
+        used to pass, which corrupted attempt history and budgeting."""
+        best = 0
+        try:
+            prefix = f"{quiz_id}_attempt_"
+            for fname in os.listdir(self.base_cache_dir):
+                if fname.startswith(prefix) and fname.endswith(".json"):
+                    num = fname[len(prefix):-len(".json")]
+                    if num.isdigit():
+                        best = max(best, int(num))
+        except OSError:
+            pass
+        return best + 1
+
     def get_retry_answers(
         self,
         questions: List[Dict],
@@ -452,8 +468,9 @@ class FastAttemptManager:
                         answers[idx] = chosen_idx
                         continue
 
-            # 3. Default fallback
-            answers[idx] = 0
+            # 3. No memory for this question -> leave UNANSWERED (abstain).
+            # (Previously defaulted to option 0: a silent guess that burned
+            # attempts and defeated the 80% submit gate.)
 
         return answers
 

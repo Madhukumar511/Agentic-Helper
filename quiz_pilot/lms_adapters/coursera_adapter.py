@@ -281,44 +281,10 @@ class CourseraAdapter(BaseLMSAdapter):
                 }
                 fillRes[idx] = ok;
             }
-
-            // Fast millisecond failsafe sweep: Guarantee NO question is left unanswered
-            leafGroups.forEach((g, gIdx) => {
-                const radios = Array.from(g.querySelectorAll('input[type="radio"], [role="radio"]'));
-                const checkboxes = Array.from(g.querySelectorAll('input[type="checkbox"], [role="checkbox"]'));
-                const num = g.querySelector('input[type="number"]');
-                const txt = g.querySelector('input[type="text"]');
-                const select = g.querySelector('select');
-
-                if (radios.length > 0) {
-                    const hasChecked = radios.some(r => r.checked || r.getAttribute('aria-checked') === 'true');
-                    if (!hasChecked) {
-                        radios[0].click();
-                        fillRes[gIdx] = true;
-                    }
-                } else if (checkboxes.length > 0) {
-                    const hasChecked = checkboxes.some(cb => cb.checked || cb.getAttribute('aria-checked') === 'true');
-                    if (!hasChecked) {
-                        checkboxes[0].click();
-                        fillRes[gIdx] = true;
-                    }
-                } else if (select && (select.selectedIndex <= 0 || !select.value) && select.options.length > 1) {
-                    select.selectedIndex = 1;
-                    select.dispatchEvent(new Event('input', { bubbles: true }));
-                    select.dispatchEvent(new Event('change', { bubbles: true }));
-                    fillRes[gIdx] = true;
-                } else if (num && !num.value) {
-                    num.value = "0";
-                    num.dispatchEvent(new Event('input', { bubbles: true }));
-                    num.dispatchEvent(new Event('change', { bubbles: true }));
-                    fillRes[gIdx] = true;
-                } else if (txt && !txt.value) {
-                    txt.value = "0";
-                    txt.dispatchEvent(new Event('input', { bubbles: true }));
-                    txt.dispatchEvent(new Event('change', { bubbles: true }));
-                    fillRes[gIdx] = true;
-                }
-            });
+            // NO guessing sweep (removed 2026-11-01): questions absent from
+            // ansMap stay UNANSWERED; callers see the gap in fillRes and the
+            // 80% gate decides on submission. Filling unknowns with the first
+            // option / "0" burned attempts on coin flips and hid uncertainty.
 
             return fillRes;
         }''', [payload])
