@@ -163,12 +163,16 @@ class CourseraAdapter(BaseLMSAdapter):
                     });
                 }
                 if (targetIdx >= 0 && targetIdx < radios.length) {
-                    radios[targetIdx].click();
+                    let r = radios[targetIdx];
+                    let lbl = r.closest('label') || r.parentElement;
+                    if (lbl) lbl.click();
+                    else r.click();
                     return true;
                 }
             } else if (checkboxes.length > 0) {
-                let indices = Array.isArray(val) ? val : [val];
-                for (let i of indices) {
+                let items = Array.isArray(val) ? val : (typeof val === 'string' && val.includes(',') ? val.split(',').map(s => s.trim()) : [val]);
+                let targetIndices = new Set();
+                for (let i of items) {
                     let targetIdx = typeof i === 'number' ? i : -1;
                     if (typeof i === 'string') {
                         let iNorm = norm(i);
@@ -178,14 +182,20 @@ class CourseraAdapter(BaseLMSAdapter):
                         });
                     }
                     if (targetIdx >= 0 && targetIdx < checkboxes.length) {
-                        let cb = checkboxes[targetIdx];
-                        let isChecked = cb.checked || cb.getAttribute('aria-checked') === 'true';
-                        if (!isChecked) {
-                            cb.click();
-                        }
+                        targetIndices.add(targetIdx);
                     }
                 }
-                return true;
+                checkboxes.forEach((cb, cbIdx) => {
+                    let isChecked = cb.checked || cb.getAttribute('aria-checked') === 'true';
+                    let shouldBeChecked = targetIndices.has(cbIdx);
+                    let clickTarget = cb.closest('label') || cb.parentElement || cb;
+                    if (shouldBeChecked && !isChecked) {
+                        clickTarget.click();
+                    } else if (!shouldBeChecked && isChecked) {
+                        clickTarget.click();
+                    }
+                });
+                return targetIndices.size > 0;
             }
             return false;
         }''', [question_index, value])
@@ -255,11 +265,15 @@ class CourseraAdapter(BaseLMSAdapter):
                         targetIdx = val;
                     }
                     if (targetIdx >= 0 && targetIdx < radios.length) {
-                        radios[targetIdx].click();
+                        let r = radios[targetIdx];
+                        let lbl = r.closest('label') || r.parentElement;
+                        if (lbl) lbl.click();
+                        else r.click();
                         ok = true;
                     }
                 } else if (checkboxes.length > 0) {
-                    let items = Array.isArray(val) ? val : [val];
+                    let items = Array.isArray(val) ? val : (typeof val === 'string' && val.includes(',') ? val.split(',').map(s => s.trim()) : [val]);
+                    let targetIndices = new Set();
                     for (let item of items) {
                         let targetIdx = typeof item === 'number' ? item : -1;
                         if (typeof item === 'string') {
@@ -270,13 +284,21 @@ class CourseraAdapter(BaseLMSAdapter):
                             });
                         }
                         if (targetIdx >= 0 && targetIdx < checkboxes.length) {
-                            let cb = checkboxes[targetIdx];
-                            let isChecked = cb.checked || cb.getAttribute('aria-checked') === 'true';
-                            if (!isChecked) {
-                                cb.click();
-                            }
-                            ok = true;
+                            targetIndices.add(targetIdx);
                         }
+                    }
+                    checkboxes.forEach((cb, cbIdx) => {
+                        let isChecked = cb.checked || cb.getAttribute('aria-checked') === 'true';
+                        let shouldBeChecked = targetIndices.has(cbIdx);
+                        let clickTarget = cb.closest('label') || cb.parentElement || cb;
+                        if (shouldBeChecked && !isChecked) {
+                            clickTarget.click();
+                        } else if (!shouldBeChecked && isChecked) {
+                            clickTarget.click();
+                        }
+                    });
+                    if (targetIndices.size > 0) {
+                        ok = true;
                     }
                 }
                 fillRes[idx] = ok;

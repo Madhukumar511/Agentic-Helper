@@ -358,6 +358,28 @@ class FastAttemptManager:
 
                 # 1. Verified correct -> lock in answer by text match
                 if status == "LOCKED_CORRECT" and verified_text:
+                    parts = []
+                    if isinstance(verified_text, list):
+                        parts = verified_text
+                    elif isinstance(verified_text, str) and ("," in verified_text or "\n" in verified_text):
+                        import json
+                        try:
+                            parsed = json.loads(verified_text)
+                            if isinstance(parsed, list):
+                                parts = parsed
+                        except Exception:
+                            parts = [p.strip() for p in verified_text.split(",") if p.strip()]
+
+                    if len(parts) > 1:
+                        matched_indices = []
+                        for part in parts:
+                            m_idx = self._match_option_by_text(part, options)
+                            if m_idx is not None and m_idx not in matched_indices:
+                                matched_indices.append(m_idx)
+                        if matched_indices:
+                            answers[idx] = matched_indices
+                            continue
+
                     opt_idx = self._match_option_by_text(verified_text, options)
                     if opt_idx is not None:
                         answers[idx] = opt_idx
