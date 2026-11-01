@@ -373,6 +373,8 @@ class AsyncTabScheduler:
                 except Exception:
                     pass
 
+            active_page = context.pages[0] if context.pages else None
+
             # Case A: Specialization page
             if "/specializations/" in current_url:
                 return await orch.auto_complete_specialization(
@@ -383,11 +385,13 @@ class AsyncTabScheduler:
             # Case B: Single Course page
             if "/learn/" in current_url:
                 import re
-                m = re.search(r'(https://www\.coursera\.org/learn/[^/?#]+)', current_url)
+                m = re.search(r'(https://www\.coursera\.org/(?:organizations/[^/]+/)?learn/[^/?#]+)', current_url)
                 course_base_url = m.group(1) if m else current_url
                 return await orch.auto_complete_course(
                     course_url=course_base_url,
-                    prefer_direct_api=prefer_direct_api
+                    prefer_direct_api=prefer_direct_api,
+                    page=active_page,
+                    context=context
                 )
 
             # Fallback: run on whatever assessment tabs are open

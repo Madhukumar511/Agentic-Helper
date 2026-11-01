@@ -198,7 +198,9 @@ class FastAttemptManager:
         answers: Dict[Any, Any],
         feedback: Dict[Any, bool],
         score_pct: Optional[float] = None,
-        md_path: str = "quiz_analysis.md"
+        passed: Optional[bool] = None,
+        md_path: str = "quiz_analysis.md",
+        **kwargs
     ) -> str:
         """
         Records attempt feedback, locks in verified correct options,
@@ -506,6 +508,16 @@ class FastAttemptManager:
         cache_path = os.path.join(self.base_cache_dir, "quiz_analysis.md")
         if cache_path not in target_paths:
             target_paths.append(cache_path)
+
+        # Mirror to active brain artifact directory if found
+        brain_base = os.path.expanduser("~/.gemini-account2/.gemini/antigravity-cli/brain")
+        if os.path.exists(brain_base):
+            for entry in os.listdir(brain_base):
+                sub = os.path.join(brain_base, entry)
+                if os.path.isdir(sub) and not entry.startswith("."):
+                    art_p = os.path.join(sub, "quiz_analysis.md")
+                    if os.path.exists(art_p) and art_p not in target_paths:
+                        target_paths.append(art_p)
 
         for p in target_paths:
             try:

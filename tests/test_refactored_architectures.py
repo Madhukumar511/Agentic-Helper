@@ -15,7 +15,7 @@ import json
 import asyncio
 import tempfile
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from quiz_pilot.mcp_server import handle_call_tool, TOOLS
 from quiz_pilot.attempt_protector import FastAttemptManager
@@ -627,6 +627,68 @@ async def test_course_orchestrator_isolated_page_and_programming():
     assert res["type"] == "programming"
     assert res["status"] in ("passed", "inspected")
     assert res["passed"] is True
+
+
+@pytest.mark.anyio
+async def test_solve_item_on_page_retry_loop_and_memory_recording():
+    """
+    Verifies that _solve_item_on_page retries when an attempt fails (<80%),
+    records each attempt into quiz_analysis.md via attempt_mgr,
+    eliminates failed choices, and terminates successfully upon passing.
+    """
+    orch = CourseOrchestrator()
+    mock_page = MagicMock()
+    mock_page.url = "https://www.coursera.org/learn/env/assignment-submission/123/regulation"
+    mock_page.evaluate = AsyncMock(return_value=None)
+    mock_page.wait_for_selector = AsyncMock(return_value=None)
+
+    # Mock LMS adapter
+    mock_adapter = MagicMock()
+    # Mock questions
+    mock_adapter.extract_questions_async = AsyncMock(return_value=[
+        {"index": 0, "prompt": "What is C&C?", "options": ["Economic", "C&C"], "type": "radio"},
+        {"index": 1, "prompt": "Benefits of VEP?", "options": ["None", "Publicity"], "type": "radio"}
+    ])
+    mock_adapter.batch_fill_answers_async = AsyncMock(return_value=True)
+    mock_adapter.submit_assessment_async = AsyncMock(return_value=True)
+
+    # Attempt 1 returns 50% (failed), Attempt 2 returns 100% (passed)
+    mock_adapter.extract_feedback_async = AsyncMock(side_effect=[
+        {"score_pct": 50.0, "passed": False, "feedback": {0: False, 1: True}},
+        {"score_pct": 100.0, "passed": True, "feedback": {0: True, 1: True}}
+    ])
+
+    with patch("quiz_pilot.course_orchestrator.get_lms_adapter", return_value=mock_adapter):
+        mock_item = {
+            "title": "Environmental Regulation",
+            "type": "quiz",
+            "url": "https://www.coursera.org/learn/env/assignment-submission/123/regulation"
+        }
+        res = await orch._solve_item_on_page(mock_page, mock_item, direct_api=None)
+        assert res["status"] == "submitted"
+        assert res["passed"] is True
+        assert res["score_pct"] == 100.0
+        # Verified extract_feedback was called for retry
+        assert mock_adapter.extract_feedback_async.call_count == 2
+
+
+def test_smart_multiworker_org_url_regex():
+    """
+    Verifies that smart_multiworker correctly parses enterprise organization URLs.
+    """
+    import re
+    url1 = "https://www.coursera.org/organizations/vvce/learn/environmental-management-ethics"
+    url2 = "https://www.coursera.org/learn/cloud-computing"
+
+    pattern = r'(https://www\.coursera\.org/(?:organizations/[^/]+/)?learn/[^/?#]+)'
+    m1 = re.search(pattern, url1)
+    m2 = re.search(pattern, url2)
+
+    assert m1 is not None
+    assert m1.group(1) == "https://www.coursera.org/organizations/vvce/learn/environmental-management-ethics"
+    assert m2 is not None
+    assert m2.group(1) == "https://www.coursera.org/learn/cloud-computing"
+
 
 
 

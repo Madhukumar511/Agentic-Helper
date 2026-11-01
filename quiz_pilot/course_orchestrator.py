@@ -99,130 +99,181 @@ class CourseOrchestrator:
         }
 
         if item_type == "quiz":
-            # 1. Direct REST/GraphQL API attempt if configured
-            if direct_api:
-                try:
-                    assessment_id = await page.evaluate(r'''() => {
-                        if (window.__APOLLO_STATE__) {
-                            for (let k of Object.keys(window.__APOLLO_STATE__)) {
-                                if (k.startsWith("OnDemandAssessment:") || k.includes("Assessment:")) {
-                                    let id = window.__APOLLO_STATE__[k].id || (k.includes(":") ? k.split(":")[1] : null);
-                                    if (id) return id;
+            max_quiz_attempts = 3
+            current_attempt = 1
+            adapter = get_lms_adapter(page)
+
+            while current_attempt <= max_quiz_attempts:
+                # 1. Direct REST/GraphQL API attempt on attempt 1 if configured
+                if direct_api and current_attempt == 1:
+                    try:
+                        assessment_id = await page.evaluate(r'''() => {
+                            if (window.__APOLLO_STATE__) {
+                                for (let k of Object.keys(window.__APOLLO_STATE__)) {
+                                    if (k.startsWith("OnDemandAssessment:") || k.includes("Assessment:")) {
+                                        let id = window.__APOLLO_STATE__[k].id || (k.includes(":") ? k.split(":")[1] : null);
+                                        if (id) return id;
+                                    }
                                 }
                             }
-                        }
-                        let m = window.location.pathname.match(/(?:assignment-submission|exam|quiz)\/([a-zA-Z0-9_-]+)/);
-                        return m ? m[1] : null;
-                    }''')
-                    if assessment_id:
-                        api_data = await direct_api.fetch_assessment(assessment_id)
-                        if api_data and not api_data.get("error"):
-                            api_questions = self._extract_questions_from_api_data(api_data)
-                            if api_questions:
-                                api_answers = self.attempt_mgr.get_retry_answers(api_questions, quiz_id=item_title)
-                                if api_answers:
-                                    parts_payload = {}
-                                    for q in api_questions:
-                                        q_idx = q["index"]
-                                        q_id = q.get("id", q_idx)
-                                        if q_idx in api_answers:
-                                            parts_payload[str(q_id)] = api_answers[q_idx]
+                            let m = window.location.pathname.match(/(?:assignment-submission|exam|quiz)\/([a-zA-Z0-9_-]+)/);
+                            return m ? m[1] : null;
+                        }''')
+                        if assessment_id:
+                            api_data = await direct_api.fetch_assessment(assessment_id)
+                            if api_data and not api_data.get("error"):
+                                api_questions = self._extract_questions_from_api_data(api_data)
+                                if api_questions:
+                                    api_answers = self.attempt_mgr.get_retry_answers(api_questions, quiz_id=item_title)
+                                    if api_answers:
+                                        parts_payload = {}
+                                        for q in api_questions:
+                                            q_idx = q["index"]
+                                            q_id = q.get("id", q_idx)
+                                            if q_idx in api_answers:
+                                                parts_payload[str(q_id)] = api_answers[q_idx]
 
-                                    if parts_payload:
-                                        sub_res = await direct_api.submit_answers(assessment_id, parts_payload)
-                                        if sub_res and sub_res.get("success"):
-                                            submission_id = (
-                                                sub_res.get("data", {}).get("id")
-                                                or sub_res.get("submission_id")
-                                                or sub_res.get("id")
-                                            )
-                                            score_pct = 100.0
-                                            passed = True
-                                            feedback_map = {}
-                                            if submission_id and hasattr(direct_api, "get_grade_feedback"):
+                                        if parts_payload:
+                                            sub_res = await direct_api.submit_answers(assessment_id, parts_payload)
+                                            if sub_res and sub_res.get("success"):
+                                                submission_id = (
+                                                    sub_res.get("data", {}).get("id")
+                                                    or sub_res.get("submission_id")
+                                                    or sub_res.get("id")
+                                                )
+                                                score_pct = 100.0
+                                                passed = True
+                                                feedback_map = {}
+                                                if submission_id and hasattr(direct_api, "get_grade_feedback"):
+                                                    try:
+                                                        grade_res = await direct_api.get_grade_feedback(submission_id)
+                                                        if grade_res and not grade_res.get("error"):
+                                                            if "score_pct" in grade_res:
+                                                                score_pct = float(grade_res["score_pct"])
+                                                            elif "score" in grade_res:
+                                                                score_pct = float(grade_res["score"])
+                                                            elif "overallScore" in grade_res:
+                                                                score_pct = float(grade_res["overallScore"])
+                                                            elif "fractionPassed" in grade_res:
+                                                                score_pct = float(grade_res["fractionPassed"]) * 100.0
+
+                                                            passed = grade_res.get("passed", score_pct >= 80.0)
+                                                            feedback_map = grade_res.get("feedback", {})
+                                                    except Exception:
+                                                        pass
+
+                                                if not feedback_map:
+                                                    feedback_map = {q["index"]: passed for q in api_questions}
+
                                                 try:
-                                                    grade_res = await direct_api.get_grade_feedback(submission_id)
-                                                    if grade_res and not grade_res.get("error"):
-                                                        if "score_pct" in grade_res:
-                                                            score_pct = float(grade_res["score_pct"])
-                                                        elif "score" in grade_res:
-                                                            score_pct = float(grade_res["score"])
-                                                        elif "overallScore" in grade_res:
-                                                            score_pct = float(grade_res["overallScore"])
-                                                        elif "fractionPassed" in grade_res:
-                                                            score_pct = float(grade_res["fractionPassed"]) * 100.0
-
-                                                        passed = grade_res.get("passed", score_pct >= 80.0)
-                                                        feedback_map = grade_res.get("feedback", {})
+                                                    self.attempt_mgr.record_attempt(
+                                                        quiz_id=item_title,
+                                                        attempt_num=current_attempt,
+                                                        questions=api_questions,
+                                                        answers=api_answers,
+                                                        feedback=feedback_map,
+                                                        score_pct=score_pct,
+                                                        passed=passed,
+                                                        md_path="quiz_analysis.md"
+                                                    )
                                                 except Exception:
                                                     pass
 
-                                            if not feedback_map:
-                                                feedback_map = {q["index"]: passed for q in api_questions}
+                                                item_res["status"] = "submitted_direct_api"
+                                                item_res["assessment_id"] = assessment_id
+                                                item_res["questions_solved"] = len(api_questions)
+                                                item_res["score_pct"] = score_pct
+                                                item_res["passed"] = passed
 
-                                            try:
-                                                self.attempt_mgr.record_attempt(
-                                                    quiz_id=item_title,
-                                                    attempt_num=1,
-                                                    questions=api_questions,
-                                                    answers=api_answers,
-                                                    feedback=feedback_map,
-                                                    score_pct=score_pct,
-                                                    passed=passed,
-                                                    md_path="quiz_analysis.md"
-                                                )
-                                            except Exception:
-                                                pass
+                                                if passed:
+                                                    return item_res
+                    except Exception:
+                        pass
 
-                                            item_res["status"] = "submitted_direct_api"
-                                            item_res["assessment_id"] = assessment_id
-                                            item_res["questions_solved"] = len(api_questions)
-                                            item_res["score_pct"] = score_pct
-                                            item_res["passed"] = passed
-                                            return item_res
-                except Exception:
-                    pass
+                # 2. DOM-based execution with Option Elimination & Memory Lock
+                questions = await adapter.extract_questions_async()
+                if not questions:
+                    await asyncio.sleep(1.0)
+                    questions = await adapter.extract_questions_async()
 
-            # 2. DOM-based execution fallback via unified async LMS adapter
-            adapter = get_lms_adapter(page)
-            questions = await adapter.extract_questions_async()
-            if questions:
-                answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=item_title)
-                # Guarantee 100% of questions are answered (never leave any question unanswered)
-                for q in questions:
-                    q_idx = q.get("index", 0)
-                    if q_idx not in answers and str(q_idx) not in answers:
-                        answers[q_idx] = 0
-                # Fill answers only without inline submit
-                if hasattr(adapter, "batch_fill_answers_async"):
-                    await adapter.batch_fill_answers_async(answers, auto_submit=False)
-                elif hasattr(adapter, "batch_fill_answers"):
-                    adapter.batch_fill_answers(answers, auto_submit=False)
-                else:
+                if questions:
+                    item_res["questions_solved"] = len(questions)
+                    answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=item_title)
+                    # Guarantee 100% of questions are answered (never leave any question unanswered)
                     for q in questions:
-                        await adapter.fill_answer_async(q["index"], answers.get(q["index"], 0))
-                
-                # Explicit modal submission with confirmation dialog
-                await adapter.submit_assessment_async()
-                
-                try:
-                    fb = await adapter.extract_feedback_async()
-                    self.attempt_mgr.record_attempt(
-                        quiz_id=item_title,
-                        attempt_num=1,
-                        questions=questions,
-                        answers=answers,
-                        feedback=fb.get("feedback", {}),
-                        score_pct=fb.get("score_pct"),
-                        md_path="quiz_analysis.md"
-                    )
-                    item_res["score_pct"] = fb.get("score_pct")
-                    item_res["passed"] = fb.get("passed", False)
-                except Exception:
-                    pass
+                        q_idx = q.get("index", 0)
+                        if q_idx not in answers and str(q_idx) not in answers:
+                            answers[q_idx] = 0
 
-                item_res["status"] = "submitted"
-                item_res["questions_solved"] = len(questions)
+                    if hasattr(adapter, "batch_fill_answers_async"):
+                        await adapter.batch_fill_answers_async(answers, auto_submit=False)
+                    elif hasattr(adapter, "batch_fill_answers"):
+                        adapter.batch_fill_answers(answers, auto_submit=False)
+                    else:
+                        for q in questions:
+                            await adapter.fill_answer_async(q["index"], answers.get(q["index"], 0))
+
+                    # Explicit modal submission with confirmation dialog
+                    await adapter.submit_assessment_async()
+                    await asyncio.sleep(1.5)
+
+                    try:
+                        fb = await adapter.extract_feedback_async()
+                        score_pct = fb.get("score_pct", 0.0)
+                        is_passed = fb.get("passed", score_pct >= 80.0)
+
+                        # IMMEDIATELY record feedback, lock correct answers, and eliminate wrong choices in quiz_analysis.md
+                        self.attempt_mgr.record_attempt(
+                            quiz_id=item_title,
+                            attempt_num=current_attempt,
+                            questions=questions,
+                            answers=answers,
+                            feedback=fb.get("feedback", {}),
+                            score_pct=score_pct,
+                            passed=is_passed,
+                            md_path="quiz_analysis.md"
+                        )
+                        item_res["score_pct"] = score_pct
+                        item_res["passed"] = is_passed
+                        item_res["status"] = "submitted"
+
+                        if is_passed:
+                            break
+                    except Exception:
+                        item_res["status"] = "submitted"
+
+                    item_res["questions_solved"] = len(questions)
+
+                # If failed and retries remain, trigger next attempt on page
+                if not item_res.get("passed") and current_attempt < max_quiz_attempts:
+                    current_attempt += 1
+                    try:
+                        # Dismiss feedback modal, click Try again or Resume
+                        await page.evaluate('''() => {
+                            let backBtn = document.querySelector('button[aria-label="Back"], [data-testid="back-button"]');
+                            if (backBtn) backBtn.click();
+
+                            let btns = Array.from(document.querySelectorAll('button'));
+                            let tryBtn = btns.find(b => {
+                                let t = b.innerText.trim();
+                                return (t === "Try again" || t === "Resume assignment" || t === "Resume") && b.offsetParent !== null;
+                            });
+                            if (tryBtn) tryBtn.click();
+                        }''')
+                        await asyncio.sleep(1.5)
+                        # Check confirmation dialog ("Continue")
+                        await page.evaluate('''() => {
+                            let dialog = document.querySelector('div[role="dialog"]');
+                            if (dialog) {
+                                let contBtn = Array.from(dialog.querySelectorAll('button')).find(b => b.innerText.trim() === "Continue");
+                                if (contBtn) contBtn.click();
+                            }
+                        }''')
+                        await asyncio.sleep(2.0)
+                    except Exception:
+                        pass
+                else:
+                    break
 
         elif item_type == "peer_review":
             prm = PeerReviewManager(page=page)
