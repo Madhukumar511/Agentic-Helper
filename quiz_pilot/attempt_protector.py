@@ -509,15 +509,35 @@ class FastAttemptManager:
         if cache_path not in target_paths:
             target_paths.append(cache_path)
 
-        # Mirror to active brain artifact directory if found
-        brain_base = os.path.expanduser("~/.gemini-account2/.gemini/antigravity-cli/brain")
-        if os.path.exists(brain_base):
-            for entry in os.listdir(brain_base):
-                sub = os.path.join(brain_base, entry)
-                if os.path.isdir(sub) and not entry.startswith("."):
-                    art_p = os.path.join(sub, "quiz_analysis.md")
-                    if os.path.exists(art_p) and art_p not in target_paths:
-                        target_paths.append(art_p)
+        # Dynamically discover active brain artifact directories across all standard and custom profiles
+        possible_brain_bases = []
+        if os.environ.get("ANTIGRAVITY_BRAIN_DIR"):
+            possible_brain_bases.append(os.environ["ANTIGRAVITY_BRAIN_DIR"])
+        if os.environ.get("GEMINI_DIR"):
+            possible_brain_bases.append(os.path.join(os.environ["GEMINI_DIR"], "antigravity-cli", "brain"))
+        
+        # Standard default path across standard Antigravity environments
+        possible_brain_bases.append(os.path.expanduser("~/.gemini/antigravity-cli/brain"))
+        
+        # Dynamic search for custom/multi-account profiles (e.g. ~/.gemini*/antigravity-cli/brain)
+        import glob
+        possible_brain_bases.extend(glob.glob(os.path.expanduser("~/.gemini*/.gemini/antigravity-cli/brain")))
+        possible_brain_bases.extend(glob.glob(os.path.expanduser("~/.gemini*/antigravity-cli/brain")))
+
+        seen_bases = set()
+        for brain_base in possible_brain_bases:
+            if not brain_base or brain_base in seen_bases or not os.path.exists(brain_base):
+                continue
+            seen_bases.add(brain_base)
+            try:
+                for entry in os.listdir(brain_base):
+                    sub = os.path.join(brain_base, entry)
+                    if os.path.isdir(sub) and not entry.startswith("."):
+                        art_p = os.path.join(sub, "quiz_analysis.md")
+                        if os.path.exists(art_p) and art_p not in target_paths:
+                            target_paths.append(art_p)
+            except Exception:
+                pass
 
         for p in target_paths:
             try:
