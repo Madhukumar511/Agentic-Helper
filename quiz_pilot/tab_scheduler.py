@@ -15,6 +15,7 @@ from playwright.async_api import async_playwright, Page, Browser
 
 from quiz_pilot.lms_adapters import get_lms_adapter
 from quiz_pilot.attempt_protector import FastAttemptManager
+from quiz_pilot.browser_launcher import ensure_browser_visible_once
 
 logger = logging.getLogger("quiz_pilot.tab_scheduler")
 
@@ -29,6 +30,22 @@ ASSESSMENT_PATH_KEYWORDS = [
     "/peer/", "/supplement/", "/attempt", "/ungradedwidget/",
     "forms.gle", "docs.google.com/forms", "quizzes/"
 ]
+
+
+def _unknown_details(questions, unknown_indices):
+    """Full prompt + option texts for unknown questions, so the driving
+    agent can SOLVE them itself (its job) and complete the quiz in the
+    same run - the human never does a quiz, and blind fills stay banned."""
+    wanted = set(unknown_indices)
+    details = []
+    for q in questions:
+        idx = q.get("index", 0)
+        if idx in wanted:
+            opts = []
+            for o in q.get("options", []):
+                opts.append(o.get("text", "") if isinstance(o, dict) else str(o))
+            details.append({"index": idx, "prompt": q.get("prompt", ""), "options": opts})
+    return details
 
 
 class AsyncTabScheduler:
@@ -100,6 +117,7 @@ class AsyncTabScheduler:
         page: Page,
         tab_index: int,
         semaphore: asyncio.Semaphore,
+        expected_url: str = None,
         answer_generator: Optional[Callable[[List[Dict[str, Any]]], Dict[int, Any]]] = None,
         auto_submit: bool = True
     ) -> Dict[str, Any]:
@@ -127,6 +145,38 @@ class AsyncTabScheduler:
                 "error": None
             }
 
+            # TAB OWNERSHIP: this worker acts ONLY on its assigned tab/URL.
+            # If the tab no longer shows the assigned work (another worker
+            # navigated it), try ONE re-navigation to our own URL; if that
+            # fails, abort WITHOUT touching whatever foreign assessment is
+            # now displayed - never adopt another worker's tab.
+            assigned_url = (expected_url or url or "").split("?")[0].rstrip("/")
+            current_base = ""
+            try:
+                current_base = (page.url or "").split("?")[0].rstrip("/")
+            except Exception:
+                pass
+            if assigned_url and current_base and current_base != assigned_url:
+                try:
+                    await page.goto(expected_url, wait_until="commit")
+                    current_base = (page.url or "").split("?")[0].rstrip("/")
+                except Exception:
+                    pass
+                if current_base != assigned_url:
+                    result["status"] = "TAB_OWNERSHIP_LOST"
+                    result["error"] = (
+                        f"Tab navigated away from its assigned URL ({assigned_url}); "
+                        "aborted without touching another tab's work."
+                    )
+                    return result
+
+            # Per-tab quiz identity: title ALONE collides across workers
+            # (two courses can hold same-titled quizzes and would share
+            # one memory file). Scope memory to this tab's course slug.
+            _slug = assigned_url.rstrip("/").split("/")[-1] if assigned_url else ""
+            quiz_key = f"{title} [{_slug}]" if title else (_slug or f"tab_{tab_index}")
+            result["quiz_key"] = quiz_key
+
             try:
                 adapter = get_lms_adapter(page)
                 
@@ -143,13 +193,20 @@ class AsyncTabScheduler:
                 if answer_generator:
                     answers = answer_generator(questions)
                 else:
-                    answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=title)
+                    answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=quiz_key)
 
-                # Guarantee 100% of questions are answered (never leave any question unanswered)
-                for q in questions:
-                    q_idx = q.get("index", 0)
-                    if q_idx not in answers and str(q_idx) not in answers:
-                        answers[q_idx] = 0
+                # NO GUESSING: questions without a known answer stay
+                # UNANSWERED and are reported (previously default-filled
+                # with option 0 - a silent coin flip on a real attempt).
+                _known = {
+                    q.get("index", 0) for q in questions
+                    if q.get("index", 0) in answers or str(q.get("index", 0)) in answers
+                }
+                unknown_indices = [q.get("index", 0) for q in questions if q.get("index", 0) not in _known]
+                coverage = (len(_known) / len(questions)) if questions else 0.0
+                result["coverage_pct"] = round(coverage * 100, 1)
+                result["unknown_questions"] = unknown_indices
+                result["unknown_questions_detail"] = _unknown_details(questions, unknown_indices)
 
                 # 3. Fill Answers via LMS Adapter (fill only)
                 if hasattr(adapter, "batch_fill_answers_async"):
@@ -160,10 +217,21 @@ class AsyncTabScheduler:
                     for q_idx, val in answers.items():
                         await adapter.fill_answer_async(int(q_idx), val)
 
-                # 4. Handle Submission & Feedback
-                if auto_submit:
+                # 4. Handle Submission & Feedback - 80% FLOOR + SINGLE ATTEMPT:
+                # the floor only stops a wasted submission; it is NOT a score
+                # target. The target is the maximum grade: every question the
+                # agent can genuinely answer must be answered before this.
+                # Submit only when known answers cover >= 80% of questions.
+                # Below the gate the known answers stay filled, NOTHING is
+                # submitted (zero attempts burned), and the run reports the
+                # uncertain questions instead of gambling an attempt on them.
+                if auto_submit and coverage < 0.80:
+                    result["status"] = "NEEDS_REVIEW_NOT_SUBMITTED"
+                    result["submitted"] = False
+                elif auto_submit:
                     await adapter.submit_assessment_async()
                     result["submitted"] = True
+                    result["attempts_used"] = 1
                     await asyncio.sleep(0.5)
 
                     try:
@@ -181,8 +249,8 @@ class AsyncTabScheduler:
                         if fb_map is None:
                             fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
                         self.attempt_mgr.record_attempt(
-                            quiz_id=title,
-                            attempt_num=1,
+                            quiz_id=quiz_key,
+                            attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
                             questions=questions,
                             answers=answers,
                             feedback=fb_map,
@@ -190,6 +258,69 @@ class AsyncTabScheduler:
                         )
                     except Exception:
                         pass
+                    # FAIL-RETRY UNTIL PASS (user policy): a PASS is final
+                    # and is never retaken to improve the score, but a FAILED
+                    # quiz means NO certificate - so after a fail the agent
+                    # keeps re-attempting, each time using the latest feedback
+                    # (correct answers locked, wrong options eliminated,
+                    # failed questions re-solved), UNTIL THE QUIZ PASSES.
+                    # Rounds stop early only when there is nothing new to
+                    # submit (no questions extractable, or known answers
+                    # under the 80% floor) or after 9 retries (loop guard).
+                    _retry_rounds = 0
+                    while result.get("passed") is False and _retry_rounds < 9:
+                        _retry_rounds += 1
+                        try:
+                            retry_questions = await adapter.extract_questions_async()
+                        except Exception:
+                            retry_questions = []
+                        if not retry_questions:
+                            break
+                        r_answers = self.attempt_mgr.get_retry_answers(retry_questions, quiz_id=quiz_key)
+                        if answer_generator:
+                            try:
+                                _gen2 = answer_generator(retry_questions)
+                                if _gen2:
+                                    r_answers.update(_gen2)
+                            except Exception:
+                                pass
+                        _r_known = {
+                            q.get("index", 0) for q in retry_questions
+                            if q.get("index", 0) in r_answers or str(q.get("index", 0)) in r_answers
+                        }
+                        if (len(_r_known) / len(retry_questions)) < 0.80:
+                            break
+                        if hasattr(adapter, "batch_fill_answers_async"):
+                            await adapter.batch_fill_answers_async(r_answers, auto_submit=False)
+                        elif hasattr(adapter, "batch_fill_answers"):
+                            adapter.batch_fill_answers(r_answers, auto_submit=False)
+                        else:
+                            for _qi, _qv in r_answers.items():
+                                await adapter.fill_answer_async(int(_qi), _qv)
+                        await adapter.submit_assessment_async()
+                        result["attempts_used"] = result.get("attempts_used", 1) + 1
+                        await asyncio.sleep(0.5)
+                        try:
+                            fb2 = await adapter.extract_feedback_async()
+                        except Exception:
+                            fb2 = {}
+                        result["score_pct"] = fb2.get("score_pct")
+                        result["passed"] = fb2.get("passed", False)
+                        result["status"] = "PASSED" if result["passed"] else "COMPLETED"
+                        try:
+                            fb_map2 = fb2.get("feedback")
+                            if fb_map2 is None:
+                                fb_map2 = {q["index"]: fb2.get("passed", False) for q in retry_questions} if fb2.get("passed") else {}
+                            self.attempt_mgr.record_attempt(
+                                quiz_id=quiz_key,
+                                attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
+                                questions=retry_questions,
+                                answers=r_answers,
+                                feedback=fb_map2,
+                                score_pct=fb2.get("score_pct")
+                            )
+                        except Exception:
+                            pass
                 else:
                     result["status"] = "ANSWERS_FILLED"
 
@@ -209,6 +340,7 @@ class AsyncTabScheduler:
         Main entry point for concurrent multi-tab quiz execution.
         Discovers all open assessment tabs and processes them concurrently.
         """
+        ensure_browser_visible_once()
         async with async_playwright() as p:
             try:
                 browser = await p.chromium.connect_over_cdp(self.cdp_url)
@@ -230,7 +362,8 @@ class AsyncTabScheduler:
                     tab_index=idx,
                     semaphore=semaphore,
                     answer_generator=answer_generator,
-                    auto_submit=auto_submit
+                    auto_submit=auto_submit,
+                    expected_url=tab.url
                 )
                 for idx, tab in enumerate(tabs)
             ]
@@ -238,8 +371,15 @@ class AsyncTabScheduler:
             results = await asyncio.gather(*tasks, return_exceptions=False)
             
             passed_count = sum(1 for r in results if r.get("passed"))
-            if passed_count > 0:
-                self.attempt_mgr.purge_all()
+            # Per-quiz cleanup ONLY: purge each passed quiz's own cache files.
+            # (Previously purge_all() fired when ANY tab passed, wiping the
+            # memory of tabs still working - a shared-state collision.)
+            for r in results:
+                if r.get("passed") and r.get("quiz_key"):
+                    try:
+                        self.attempt_mgr.purge_cache(r["quiz_key"])
+                    except Exception:
+                        pass
             return {
                 "total_tabs": len(tabs),
                 "passed_count": passed_count,
@@ -256,6 +396,7 @@ class AsyncTabScheduler:
         Opens a list of assessment/course URLs into separate background tabs,
         then processes and solves all of them concurrently.
         """
+        ensure_browser_visible_once()
         async with async_playwright() as p:
             try:
                 browser = await p.chromium.connect_over_cdp(self.cdp_url)
@@ -292,7 +433,8 @@ class AsyncTabScheduler:
                     page=tab,
                     tab_index=idx,
                     semaphore=semaphore,
-                    auto_submit=auto_submit
+                    auto_submit=auto_submit,
+                    expected_url=urls[idx]
                 )
                 for idx, tab in enumerate(created_pages)
             ]
@@ -322,6 +464,7 @@ class AsyncTabScheduler:
            - Single Course (/learn/<slug>): Crawls syllabus, opens incomplete module assignments across multiple tabs (up to max_concurrency), and solves concurrently!
            - My-Learning (/my-learning): Extracts current active course and auto-completes.
         """
+        ensure_browser_visible_once()
         async with async_playwright() as p:
             try:
                 browser = await p.chromium.connect_over_cdp(self.cdp_url)
@@ -340,18 +483,34 @@ class AsyncTabScheduler:
                 # Solve existing multi-tabs concurrently
                 return await self.run_parallel_batch(auto_submit=auto_submit)
 
-            # 2. Determine target URL
-            current_url = target_url or ""
-            if not current_url:
-                # Search all open tabs for a specialization or course URL
-                for pg in context.pages:
-                    u = pg.url.lower()
-                    if "/specializations/" in u:
-                        current_url = pg.url
-                        break
-                    elif "/learn/" in u and not any(k in u for k in ["/lecture/", "/discussionprompt/"]):
-                        current_url = pg.url
-                        break
+            # 2. Determine target URL and target page
+            if target_url:
+                current_url = target_url
+                target_page = next((pg for pg in context.pages if target_url.split("?")[0] in pg.url), None)
+            else:
+                # Determine the target course/specialization page WITHOUT grabbing
+                # pages[0]: in multi-tab runs the first page may belong to another
+                # worker. Only an unambiguous single course/spec page may route.
+                course_pages = [
+                    pg for pg in context.pages
+                    if "/specializations/" in pg.url or "/learn/" in pg.url
+                ]
+                distinct_courses = {pg.url.split("?")[0] for pg in course_pages}
+                if len(distinct_courses) > 1:
+                    spec_pages = [pg for pg in course_pages if "/specializations/" in pg.url]
+                    if len(spec_pages) == 1:
+                        target_page = spec_pages[0]
+                    else:
+                        return {"error": "Multiple different course/specialization tabs are open; "
+                                         "cannot tell which one to run. Keep exactly one course tab open."}
+                else:
+                    target_page = course_pages[0] if course_pages else None
+
+                if not target_page:
+                    if quiz_tabs:
+                        return await self.run_parallel_batch(auto_submit=auto_submit)
+                    return {"error": "No open browser pages found."}
+                current_url = target_page.url
 
             # Fallback to active/first page URL
             if not current_url and context.pages:
@@ -387,12 +546,38 @@ class AsyncTabScheduler:
                 import re
                 m = re.search(r'(https://www\.coursera\.org/(?:organizations/[^/]+/)?learn/[^/?#]+)', current_url)
                 course_base_url = m.group(1) if m else current_url
-                return await orch.auto_complete_course(
+                course_result = await orch.auto_complete_course(
                     course_url=course_base_url,
                     prefer_direct_api=prefer_direct_api,
                     page=active_page,
                     context=context
                 )
+                # A single course inside a Specialization is NOT the whole job:
+                # the certificate needs EVERY course in the specialization.
+                # If this course page links to a specialization, continue with
+                # the remaining courses instead of stopping after one course
+                # (previously: completed one course, then wrongly reported
+                # "no other courses").
+                spec_url = None
+                try:
+                    spec_url = await target_page.evaluate(
+                        "() => { const a = document.querySelector('a[href*=\"/specializations/\"]'); "
+                        "return a ? a.href.split('?')[0] : null; }"
+                    )
+                except Exception:
+                    spec_url = None
+                if spec_url:
+                    spec_result = await orch.auto_complete_specialization(
+                        spec_url=spec_url,
+                        prefer_direct_api=prefer_direct_api
+                    )
+                    return {
+                        "course_result": course_result,
+                        "specialization_result": spec_result,
+                        "note": "Course belongs to a specialization; continued "
+                                "with its remaining courses.",
+                    }
+                return course_result
 
             # Fallback: run on whatever assessment tabs are open
             return await self.run_parallel_batch(auto_submit=auto_submit)

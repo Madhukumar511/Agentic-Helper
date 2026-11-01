@@ -242,6 +242,14 @@ def test_peer_review_rubric_max_points_inspection():
     assert res["status"] in ("completed", "max_reviews_reached")
     # Verify the JS script contained the maxPoints scoring evaluation logic
     assert any("maxPoints" in s for s in p_page.evaluated_scripts)
+    # Regression guard (2026-11-01): peer grading must NEVER go back to random
+    # selection. A bare "maxPoints" string check passed even when the logic
+    # was replaced by Math.random (the variable survived as dead code), so
+    # assert on the actual selection behaviour instead.
+    from quiz_pilot.peer_review_solver import RUBRIC_SELECTION_JS
+    assert "Math.random" not in RUBRIC_SELECTION_JS
+    assert "bestRadio" in RUBRIC_SELECTION_JS and "effectiveScore" in RUBRIC_SELECTION_JS
+    assert not any("Math.random" in s for s in p_page.evaluated_scripts)
 
 
 def test_diagram_parser_removes_blind_selection():
@@ -291,8 +299,25 @@ async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path, monkeyp
             return True
 
     page = MockAsyncPage()
-    orch = CourseOrchestrator(max_concurrency=2)
-    orch.attempt_mgr = FastAttemptManager(base_cache_dir=str(tmp_path / "cache"))
+
+    def make_orch():
+        # Fresh orchestrator per scenario = one run. Under the no-guessing
+        # policy the API/DOM paths only submit answers that memory has
+        # VERIFIED, so seed one fully-verified attempt for both questions
+        # (previously this test unknowingly relied on the option-0 default).
+        o = CourseOrchestrator(max_concurrency=2)
+        o.attempt_mgr = FastAttemptManager(base_cache_dir=str(tmp_path / "cache"))
+        return o
+
+    orch = make_orch()
+    orch.attempt_mgr.record_attempt(
+        quiz_id="Cloud Assessment 1", attempt_num=1,
+        questions=[
+            {"index": 0, "prompt": "API Q1", "options": [{"text": "X"}, {"text": "Y"}]},
+            {"index": 1, "prompt": "Orchestrator Q", "options": [{"text": "A"}, {"text": "B"}]},
+        ],
+        answers={0: 0, 1: 0}, feedback={0: True, 1: True}, score_pct=100.0,
+    )
 
     item = {
         "title": "Cloud Assessment 1",
@@ -327,7 +352,7 @@ async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path, monkeyp
     })
     mock_400_api.submit_answers = AsyncMock(return_value={"success": False, "status_code": 400, "body": "Bad Request"})
 
-    res_400 = await orch._solve_item_on_page(page, item, direct_api=mock_400_api)
+    res_400 = await make_orch()._solve_item_on_page(page, item, direct_api=mock_400_api)
     assert res_400["status"] == "submitted"  # DOM fallback executed
     assert res_400["questions_solved"] == 1
     assert res_400["score_pct"] == 100.0
@@ -337,7 +362,7 @@ async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path, monkeyp
     mock_empty_api.fetch_assessment = AsyncMock(return_value={"id": "assessment_12345", "questions": []})
     mock_empty_api.submit_answers = AsyncMock()
 
-    res_fallthrough = await orch._solve_item_on_page(page, item, direct_api=mock_empty_api)
+    res_fallthrough = await make_orch()._solve_item_on_page(page, item, direct_api=mock_empty_api)
     assert res_fallthrough["status"] == "submitted"
     assert res_fallthrough["questions_solved"] == 1
     assert not mock_empty_api.submit_answers.called
@@ -346,7 +371,7 @@ async def test_course_orchestrator_direct_api_and_dom_fallback(tmp_path, monkeyp
     mock_failing_api = MagicMock()
     mock_failing_api.fetch_assessment = AsyncMock(side_effect=Exception("API Error"))
 
-    res_dom = await orch._solve_item_on_page(page, item, direct_api=mock_failing_api)
+    res_dom = await make_orch()._solve_item_on_page(page, item, direct_api=mock_failing_api)
     assert res_dom["status"] == "submitted"
     assert res_dom["questions_solved"] == 1
     assert res_dom["score_pct"] == 100.0
@@ -538,18 +563,21 @@ def test_no_duplicate_files():
         assert os.path.dirname(repo_matches[0]).endswith("quiz_pilot")
 
 
-def test_batch_fill_guarantees_no_unanswered_questions():
+def test_batch_fill_never_guesses_unanswered_questions():
     """
-    Verifies CourseraAdapter.batch_fill_answers includes the millisecond
-    failsafe sweep preventing unanswered questions.
+    Verifies CourseraAdapter.batch_fill_answers does NOT guess: the old
+    millisecond failsafe sweep (first-option clicks, dropdown index 1,
+    "0" in text/number inputs) was removed 2026-11-01. Questions absent
+    from the answer map must stay UNANSWERED so the 80% gate can decide.
     """
     import inspect
     from quiz_pilot.lms_adapters.coursera_adapter import CourseraAdapter
 
     src = inspect.getsource(CourseraAdapter.batch_fill_answers)
-    assert "leafGroups.forEach" in src
-    assert "hasChecked" in src
-    assert "radios[0].click()" in src
+    assert "leafGroups.forEach" not in src
+    assert "radios[0].click()" not in src
+    assert "checkboxes[0].click()" not in src
+    assert 'value = "0"' not in src
 
 
 def test_purge_all_cleans_bridge_temp_files(tmp_path):

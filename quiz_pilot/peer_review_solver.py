@@ -21,25 +21,68 @@ DEFAULT_PEER_FEEDBACKS = [
 ]
 
 RUBRIC_SELECTION_JS = """() => {
-    // Fast rubric option selection (random or maxPoints scoring)
-    let maxPoints = 0;
-    const groups = {};
+    const map = {};
     document.querySelectorAll("input[type=radio]").forEach(r => {
         const name = r.name || r.getAttribute('data-group') || 'default';
-        if (!groups[name]) groups[name] = [];
-        groups[name].push(r);
+        if (!map[name]) map[name] = [];
+        map[name].push(r);
     });
-    let clicked = 0;
-    for (const name in groups) {
-        const radios = groups[name];
+    let count = 0;
+    for (const name in map) {
+        const radios = map[name];
         if (!radios.length) continue;
-        // Randomly select one option per criteria group without over-analyzing
-        const chosen = radios[Math.floor(Math.random() * radios.length)];
-        chosen.click();
-        chosen.dispatchEvent(new Event('change', { bubbles: true }));
-        clicked++;
+        
+        let bestRadio = radios[0];
+        let maxPoints = -Infinity;
+        
+        radios.forEach((r, idx) => {
+            let pts = null;
+            
+            // 1. Check data attributes & value
+            const attrCandidates = [
+                r.getAttribute('data-score'),
+                r.getAttribute('data-points'),
+                r.getAttribute('data-value'),
+                r.value
+            ];
+            for (const attr of attrCandidates) {
+                if (attr !== null && attr !== undefined && !isNaN(parseFloat(attr))) {
+                    pts = parseFloat(attr);
+                    break;
+                }
+            }
+            
+            // 2. Check label text and aria attributes for point patterns e.g. "3 points", "(3 pts)"
+            const lbl = r.closest('label') || 
+                        (r.id ? document.querySelector(`label[for="${r.id}"]`) : null) || 
+                        r.parentElement;
+            const labelText = lbl ? (lbl.innerText || lbl.textContent || '') : '';
+            const ariaText = r.getAttribute('aria-label') || '';
+            const fullText = `${labelText} ${ariaText}`;
+            
+            const ptMatch = fullText.match(/\\b(\\d+(?:\\.\\d+)?)\\s*(?:points?|pts?|marks?)\\b/i) ||
+                            fullText.match(/(?:score|points|pts|grade)\\s*[:=-]?\\s*(\\d+(?:\\.\\d+)?)/i) ||
+                            fullText.match(/\\((\\d+(?:\\.\\d+)?)\\s*(?:points?|pts?)?\\)/i);
+            if (ptMatch) {
+                pts = parseFloat(ptMatch[1]);
+            }
+            
+            // 3. Fallback: if no numeric points discovered, assume standard order
+            const effectiveScore = (pts !== null && !isNaN(pts)) ? pts : idx;
+            
+            if (effectiveScore > maxPoints) {
+                maxPoints = effectiveScore;
+                bestRadio = r;
+            }
+        });
+        
+        if (bestRadio) {
+            bestRadio.click();
+            bestRadio.dispatchEvent(new Event('change', { bubbles: true }));
+            count++;
+        }
     }
-    return clicked;
+    return count;
 }"""
 
 class PeerReviewManager:

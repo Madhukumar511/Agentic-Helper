@@ -1,8 +1,18 @@
 """
 Autonomous Browser Launcher for Agentic-Helper / Quiz-Pilot.
 Cross-platform: Windows, Linux, and macOS.
-Auto-detects Chrome, Edge, Chromium, or Brave, launches with remote debugging port 9222,
-and ensures CDP endpoint is live.
+Launches Google Chrome (Windows: Chrome first, other Chromium browsers only as
+fallback) with remote debugging port 9222, verifies the CDP endpoint is live,
+and BRINGS THE BROWSER WINDOW TO THE FRONT on Windows.
+
+Why the bring-to-front step exists (bug fixed 2026-11-01):
+When an IDE agent / background shell launches a browser, Windows' foreground
+lock forbids the new window from taking focus, so the browser used to start
+invisibly in the background even though the process and the CDP port were
+fine. Users then reported "the browser did not open". After a successful
+launch this module now (1) activates the course tab over CDP and (2) raises
+the actual OS window with the Win32 foreground APIs, so the window is
+genuinely visible on the desktop.
 """
 
 import os
@@ -20,6 +30,18 @@ from typing import Optional, List, Tuple
 CDP_DEFAULT_PORT = 9222
 
 
+def _cdp_get(port: int, path: str, timeout: float = 2.0):
+    """GET a CDP HTTP endpoint and return parsed JSON (or raw text)."""
+    url = f"http://127.0.0.1:{port}{path}"
+    req = urllib.request.Request(url, headers={"User-Agent": "QuizPilot/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8", "replace")
+    try:
+        return json.loads(body)
+    except Exception:
+        return body
+
+
 def is_browser_running(port: int = CDP_DEFAULT_PORT) -> bool:
     """Checks if a browser is actively listening on the CDP debugging port."""
     url = f"http://127.0.0.1:{port}/json/version"
@@ -29,6 +51,133 @@ def is_browser_running(port: int = CDP_DEFAULT_PORT) -> bool:
             return resp.status == 200
     except Exception:
         return False
+
+
+def activate_first_page_tab(port: int = CDP_DEFAULT_PORT) -> str:
+    """Activates the first real page tab over CDP and returns its title ('' if none)."""
+    try:
+        tabs = _cdp_get(port, "/json/list")
+        if not isinstance(tabs, list):
+            return ""
+        page = next((t for t in tabs if t.get("type") == "page"), None)
+        if not page:
+            return ""
+        tab_id = page.get("id")
+        if tab_id:
+            try:
+                _cdp_get(port, f"/json/activate/{tab_id}")
+            except Exception:
+                pass
+        return page.get("title", "") or ""
+    except Exception:
+        return ""
+
+
+def _raise_browser_window_windows(tab_title: str = "") -> bool:
+    """
+    Raises the browser's OS window to the foreground on Windows.
+
+    A plain SetForegroundWindow call from a background process is blocked by
+    the Windows foreground lock, so this uses the standard workarounds:
+    a simulated Alt keypress (grants foreground rights), AttachThreadInput
+    with the foreground and target threads, ShowWindow restore/maximise,
+    then SetForegroundWindow. Returns True if a browser window was found.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        windows = []
+        enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def _cb(hwnd, _lparam):
+            if user32.IsWindowVisible(hwnd):
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buf, length + 1)
+                    pid = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                    windows.append((hwnd, pid.value, buf.value))
+            return True
+
+        user32.EnumWindows(enum_proc_type(_cb), 0)
+
+        def _image_name(pid: int) -> str:
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+            if not handle:
+                return ""
+            try:
+                buf = ctypes.create_unicode_buffer(32768)
+                size = wintypes.DWORD(32768)
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    return os.path.basename(buf.value).lower()
+                return ""
+            finally:
+                kernel32.CloseHandle(handle)
+
+        browser_images = {"chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe", "chromium.exe"}
+        target_hwnd = None
+        if tab_title:
+            frag = tab_title.strip()[:25].lower()
+            for hwnd, pid, title in windows:
+                if frag and frag in title.lower() and _image_name(pid) in browser_images:
+                    target_hwnd = hwnd
+                    break
+        if target_hwnd is None:
+            for hwnd, pid, title in windows:
+                if _image_name(pid) in browser_images:
+                    target_hwnd = hwnd
+                    break
+        if target_hwnd is None:
+            return False
+
+        SW_RESTORE, SW_MAXIMIZE = 9, 3
+        VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
+        # Simulated Alt press releases the foreground lock for this process.
+        user32.keybd_event(VK_MENU, 0, 0, 0)
+        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+        if user32.IsIconic(target_hwnd):
+            user32.ShowWindow(target_hwnd, SW_RESTORE)
+
+        cur_thread = kernel32.GetCurrentThreadId()
+        win_thread = user32.GetWindowThreadProcessId(target_hwnd, None)
+        fg_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+        user32.AttachThreadInput(cur_thread, win_thread, True)
+        if fg_thread and fg_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, fg_thread, True)
+        try:
+            user32.BringWindowToTop(target_hwnd)
+            user32.ShowWindow(target_hwnd, SW_MAXIMIZE)
+            user32.SetForegroundWindow(target_hwnd)
+        finally:
+            user32.AttachThreadInput(cur_thread, win_thread, False)
+            if fg_thread and fg_thread != cur_thread:
+                user32.AttachThreadInput(cur_thread, fg_thread, False)
+        return True
+    except Exception:
+        return False
+
+
+def bring_browser_to_front(port: int = CDP_DEFAULT_PORT) -> bool:
+    """
+    Makes the running browser genuinely visible: activates its page tab over
+    CDP, then raises the OS window (Windows). Safe to call repeatedly.
+    """
+    title = activate_first_page_tab(port)
+    if sys.platform == "win32":
+        for _ in range(3):
+            if _raise_browser_window_windows(title):
+                return True
+            time.sleep(0.4)
+        return False
+    return True
 
 
 def open_url_in_running_browser(url: str, port: int = CDP_DEFAULT_PORT) -> bool:
@@ -126,28 +275,29 @@ def get_windows_default_browser() -> Optional[str]:
 
 
 def get_browser_candidates() -> List[str]:
-    """Finds available browsers on the host OS, prioritizing user's system default."""
+    """Finds available browsers on the host OS.
+
+    Windows priority is deliberately GOOGLE CHROME FIRST (product decision).
+    The system default browser is NOT prioritised: on many machines the
+    default is Edge, whose "Startup Boost" background process can swallow a
+    launch so that no visible window ever appears. Edge/Brave/Vivaldi are
+    only fallbacks for machines with no Chrome installed.
+    """
     candidates = []
 
     if sys.platform == "win32":
-        # 1. System Default Browser via Registry (if Chromium-based)
-        default_browser = get_windows_default_browser()
-        if default_browser and os.path.exists(default_browser):
-            name_lower = os.path.basename(default_browser).lower()
-            if any(k in name_lower for k in ["chrome", "msedge", "edge", "brave", "vivaldi", "chromium"]):
-                candidates.append(default_browser)
-
-        # 2. Windows standard Chrome, Edge, Brave, Vivaldi paths
         local_app_data = os.environ.get("LOCALAPPDATA", r"C:\Users\Default\AppData\Local")
         program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
         program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
         program_w64 = os.environ.get("ProgramW6432", r"C:\Program Files")
 
         paths = [
+            # 1. Google Chrome — the supported browser
             os.path.join(program_files, "Google", "Chrome", "Application", "chrome.exe"),
             os.path.join(program_files_x86, "Google", "Chrome", "Application", "chrome.exe"),
             os.path.join(program_w64, "Google", "Chrome", "Application", "chrome.exe"),
             os.path.join(local_app_data, "Google", "Chrome", "Application", "chrome.exe"),
+            # 2. Fallbacks, only used when Chrome is absent
             os.path.join(program_files, "Microsoft", "Edge", "Application", "msedge.exe"),
             os.path.join(program_files_x86, "Microsoft", "Edge", "Application", "msedge.exe"),
             os.path.join(program_w64, "Microsoft", "Edge", "Application", "msedge.exe"),
@@ -160,11 +310,18 @@ def get_browser_candidates() -> List[str]:
             if os.path.exists(p) and p not in candidates:
                 candidates.append(p)
 
-        # 3. Fallback to PATH lookup
+        # 3. Fallback to PATH lookup (Chrome first)
         for name in ["chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe", "chromium.exe"]:
             w = shutil.which(name)
             if w and w not in candidates:
                 candidates.append(w)
+
+        # 4. System default browser as a last resort (if Chromium-based)
+        default_browser = get_windows_default_browser()
+        if default_browser and os.path.exists(default_browser) and default_browser not in candidates:
+            name_lower = os.path.basename(default_browser).lower()
+            if any(k in name_lower for k in ["chrome", "msedge", "edge", "brave", "vivaldi", "chromium"]):
+                candidates.append(default_browser)
 
     elif sys.platform == "darwin":
         # macOS paths
@@ -206,33 +363,45 @@ def get_browser_candidates() -> List[str]:
     return candidates
 
 
+def get_profile_dir() -> str:
+    """
+    Persistent, dedicated browser profile.
+
+    Windows: %LOCALAPPDATA%\\AgenticHelper\\browser-profile — deliberately NOT
+    %TEMP%: Windows Storage Sense / Disk Cleanup periodically wipe TEMP, which
+    used to delete the profile and the saved Coursera login with it.
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        return os.path.join(base, "AgenticHelper", "browser-profile")
+    return os.path.expanduser("~/.assessment_browser")
+
+
 def launch_browser(url: Optional[str] = None, port: int = CDP_DEFAULT_PORT) -> Tuple[bool, str]:
     """
-    Launches a Chromium browser on the remote debugging port with an isolated profile.
+    Launches Chrome on the remote debugging port with the dedicated profile,
+    verifies the CDP endpoint actually responds (up to ~20 s), and brings the
+    browser window to the front so the user can see it and log in.
     """
     if is_browser_running(port):
         if url:
             open_url_in_running_browser(url, port)
-        return True, f"Browser is already running and listening on port {port}."
+        bring_browser_to_front(port)
+        return True, f"Browser is already running and listening on port {port} (window brought to front)."
 
     candidates = get_browser_candidates()
     if not candidates:
         return False, "No Chromium-based browser (Chrome, Edge, Brave, Chromium) found installed on this machine."
 
     browser_bin = candidates[0]
-
-    # Dedicated isolated profile directory
-    if sys.platform == "win32":
-        user_data = os.path.join(os.environ.get("TEMP", r"C:\tmp"), "agent_browser")
-    else:
-        user_data = os.path.expanduser("~/.assessment_browser")
-
+    user_data = get_profile_dir()
     os.makedirs(user_data, exist_ok=True)
 
     target_url = url or "https://www.coursera.org"
     cmd = [
         browser_bin,
         f"--remote-debugging-port={port}",
+        "--remote-allow-origins=*",
         f"--user-data-dir={user_data}",
         "--no-first-run",
         "--no-default-browser-check",
@@ -243,24 +412,21 @@ def launch_browser(url: Optional[str] = None, port: int = CDP_DEFAULT_PORT) -> T
 
     try:
         if sys.platform == "win32":
-            # On Windows, launch detached GUI process directly without cmd.exe shell mangling
+            # Launch the browser exe DIRECTLY (no powershell / cmd /c chain):
+            # nested shell launches are a classic malware pattern and get
+            # blocked by antivirus "malicious command line" heuristics.
             flags = 0
             if hasattr(subprocess, "DETACHED_PROCESS"):
                 flags |= subprocess.DETACHED_PROCESS
             if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
                 flags |= subprocess.CREATE_NEW_PROCESS_GROUP
-            try:
-                subprocess.Popen(
-                    cmd,
-                    creationflags=flags,
-                    close_fds=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                # Safe fallback if direct spawn restricted
-                quoted_cmd = [f'"{c}"' if (' ' in c or '&' in c or '^' in c) else c for c in cmd]
-                subprocess.Popen(f'start "" {" ".join(quoted_cmd)}', shell=True)
+            subprocess.Popen(
+                cmd,
+                creationflags=flags,
+                close_fds=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         else:
             subprocess.Popen(
                 cmd,
@@ -271,22 +437,51 @@ def launch_browser(url: Optional[str] = None, port: int = CDP_DEFAULT_PORT) -> T
     except Exception as e:
         return False, f"Failed to launch browser '{browser_bin}': {e}"
 
-    # Wait up to 6 seconds for CDP to come online
-    for _ in range(12):
+    # Wait up to ~20 seconds for CDP to come online (slow first launches and
+    # antivirus scanning can delay the port well past the old 6 s limit)
+    for _ in range(40):
         time.sleep(0.5)
         if is_browser_running(port):
             if target_url:
                 open_url_in_running_browser(target_url, port)
-            return True, f"Successfully launched {os.path.basename(browser_bin)} on port {port} and opened {target_url}!"
+            raised = bring_browser_to_front(port)
+            front_note = "window brought to front" if raised else "window may be behind other windows"
+            return True, f"Successfully launched {os.path.basename(browser_bin)} on port {port} and opened {target_url} ({front_note})!"
 
-    return False, f"Browser launched, but port {port} did not respond within 6 seconds."
+    return False, f"Browser launched, but port {port} did not respond within 20 seconds."
+
+
+_visibility_ensured = False
+
+
+def ensure_browser_visible_once(port: int = CDP_DEFAULT_PORT) -> bool:
+    """Make sure the browser is running AND its window is raised - once
+    per process.
+
+    The tool's Chrome survives between runs, often minimized or behind
+    the IDE. Every connect site used to attach silently, so the agent
+    worked in a browser the user could not see (reported 2026-11-01:
+    a full run executed with no visible window). Callers invoke this
+    before their first CDP connection; the once-guard keeps later calls
+    free and never steals focus mid-run.
+    """
+    global _visibility_ensured
+    if _visibility_ensured:
+        return True
+    _visibility_ensured = True
+    try:
+        return ensure_browser(port=port)
+    except Exception:
+        return False
 
 
 def ensure_browser(url: Optional[str] = None, port: int = CDP_DEFAULT_PORT) -> bool:
-    """Ensures browser is alive and listening, launching if needed, and navigates to target URL."""
+    """Ensures browser is alive and listening, launching if needed, navigating
+    to the target URL, and bringing the window to the front."""
     if is_browser_running(port):
         if url:
             open_url_in_running_browser(url, port)
+        bring_browser_to_front(port)
         return True
     ok, msg = launch_browser(url=url, port=port)
     print(msg)

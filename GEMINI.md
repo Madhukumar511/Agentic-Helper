@@ -11,22 +11,23 @@ When the user types `/agentic-helper [course_url]`, or asks you to *"solve quiz"
 2. **Auto-Launch & Navigate Browser**: Ensure Chrome/Edge is listening on 9222 and navigated to the target URL using `quiz_pilot.browser_launcher.ensure_browser(url)` (which opens and navigates the link automatically across Windows, Linux, and macOS).
 3. **Login Gate**: If Coursera shows a login screen, ask the user to log in and say "continue". If already logged in, proceed immediately!
 4. **Operate entirely in-memory**: Never write one-off course scripts (e.g., `solve_hw.py`) to disk! Use `CourseraAdapter` or native MCP tools directly.
-5. **The 15 Immutable Agent Rules (Strictly Enforced)**:
-   - **Rule 1 (Pure In-Memory Engine Law)**: Zero scratch scripts (`solve_*.py`), zero `/tmp` builds, zero ad-hoc shell compiles.
-   - **Rule 2 (ZERO External Git Cloning Law)**: Never run `git clone` to pull random student repositories for course assignments.
-   - **Rule 3 (Mandatory Parallel Multi-Tab Workers)**: Never run sequentially in a single tab. Specialization courses open each child course in its own tab; single courses open modules across parallel tabs.
-   - **Rule 4 (Multi-Tab & Specialization Tab Isolation)**: Zero tab collisions. Each child course runs in a dedicated `context.new_page()` tab.
-   - **Rule 5 (Mandatory 100% Comprehensive Assignment Completion)**: Non-bypassable mandate: complete every item labeled "Assignment" (Graded Assignment, Peer-graded Assignment, Programming Assignment).
-   - **Rule 6 (Mandatory Peer-Graded Two-Step Protocol)**: Submit report PDF & demo link first, then immediately complete 3-4 peer reviews with rapid random option marking.
-   - **Rule 7 (Mandatory Failure Memory & Option Elimination)**: Record failed attempts in `quiz_analysis.md`, lock in verified choices, and deterministically eliminate wrong options.
-   - **Rule 8 (Speed & Accuracy Balancing Law)**: Fast millisecond execution paired with $\ge 80\%$ passing threshold.
-   - **Rule 9 (Mandatory 100% Answer Guarantee)**: Never leave any question unanswered before submission.
-   - **Rule 10 (Zero Websearch Law)**: Local solvers execute in-memory; web search strictly reserved for dynamic real-time news questions.
-   - **Rule 11 (Direct REST/GraphQL API First)**: Attempt Direct API first via `CourseraDirectAPI`; cleanly fall through to DOM on error.
-   - **Rule 12 (Token Reduction Enforcement - Methods A, C, D)**: Filter shell outputs (`/dev/null 2>&1`), Direct REST API first, and recommend `/compact` regularly.
-   - **Rule 13 (Always Speak Caveman)**: Terse smart caveman. Drop filler/pleasantries. High-signal technical accuracy only.
-   - **Rule 14 (Unified Async Execution & Pool)**: Async tab lookups and persistent WebSocket connection pool across tabs.
-   - **Rule 15 (Automatic Zero-Artifact Cleanup)**: Purge cache and temporary files immediately upon passing via `FastAttemptManager().purge_all()` or `quiz-pilot clean`.
+5. **Mandatory Parallel Multi-Tab Dispatch (Specialization vs Single Course)**:
+   - **NEVER run sequentially in a single tab!**
+   - **Specialization Course (`/specializations/<slug>`)**: Open **EACH child course in its own browser tab simultaneously** and complete all child courses in parallel concurrently in under 30 minutes!
+   - **Single Course (`/learn/<slug>`)**: Open **different module quizzes in separate browser tabs simultaneously** (Week 1, Week 2, Week 3, Week 4 Quizzes) and solve all modules in parallel concurrently!
+   - **Universal Execution**: Call `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or MCP tool `smart_multiworker()`.
+6. **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:
+   - If an attempt scores $< 100\%$ or fails, immediately create or update `quiz_analysis.md` via `FastAttemptManager().record_attempt(...)` or MCP `record_quiz_analysis`.
+   - Record verified correct option texts (`LOCKED_CORRECT`) and eliminate failed option texts (`ELIMINATED`).
+   - On retry, inspect `quiz_analysis.md` via `FastAttemptManager().get_retry_answers(...)`: lock in verified choices by text match across shuffled options, focus 100% of compute strictly on wrong questions, and **NEVER select a previously failed option again**!
+7. **Mandatory Post-Quiz & Post-Course Purge**: When passed ($\ge 80\%$) or course completes, automatically run `FastAttemptManager().purge_all()` or `agentic-helper clean` to wipe internal temporary caches and bridge files while keeping verified analysis.
+8. **Direct REST API Acceleration with Safe DOM Fallback**: Attempt Direct REST API submissions with grade polling and `quiz_analysis.md` syncing first; cleanly fall through to DOM execution if unsupported or on error/HTTP 400.
+9. **Unified Async Execution**: Use async tab finders (`await find_assessment_page`) and connection pool multi-tab bridge without blocking event loops.
+10. **No-Guessing, 80% Gate, Single Attempt**: The agent completes every quiz itself - the human never does a quiz. Never fill blindly: no option 0, no first option, no "0" in a text box - a blind fill is a guess, not an answer. Memory and the local solvers answer what they can; any question they leave unknown is YOUR job: read it, work it out from the question content and your subject knowledge, and answer it in the same run. When a result says NEEDS_REVIEW_NOT_SUBMITTED, it lists the unknown questions with their text - call get_retry_answers, solve those questions yourself, and submit the merged full answer set. Aim for the MAXIMUM grade, ideally 100%: the percentage on the certificate converts directly into college marks (85% = 8.5/10), so never settle for merely passing - genuinely answer EVERY question. The 80% figure is only a safety floor, never a target: if genuinely answered questions are below 80%, finish solving them before spending the attempt. Attempts per quiz per run - the pass/fail rule: if the attempt PASSES, the quiz is DONE - never retake to improve a passing score (not even 85% on an unlimited-attempt quiz; the extra marks are not worth the extra tokens and time), and no attempts of any kind after a pass. If the attempt FAILS, keep re-attempting UNTIL IT PASSES, because a failed quiz means no certificate: after every fail, read the feedback, lock the verified-correct answers, never repeat an eliminated option, and solve the questions you got wrong before the next attempt. Attempts stop only when the quiz passes - or when Coursera itself locks further attempts, which must be reported honestly, never hidden.
+11. **Zero Websearch Law**: Never trigger web search for CS/systems questions. Built-in solvers execute in-memory. Search permitted ONLY if unsolvable dynamic current event.
+12. **Always Speak Caveman**: Speak terse smart caveman. Drop filler, pleasantries, tokens. High-signal technical accuracy only.
+13. **Mandatory Peer-Graded Two-Step Protocol**: Always submit your own assignment first on `/submit` (title, report PDF via Uppy, video URL, honor code checkbox, primary submit + modal dialog confirmation). Only after submission is complete, navigate to `/give-feedback` / `/review-next` and grade 3-4 peers at MAX value: run the peer-review solver, whose one-shot rubric sweep selects the highest-points option for every criterion (never hand-click options one by one - slow). Add brief positive feedback!
+14. **Advance**: Move to the next quiz until the entire course or specialization is passed!
 
 
 ---
@@ -113,3 +114,9 @@ flowchart TD
    /agentic-helper
    ```
 5. **The agent takes over and solves the assessment automatically!**
+
+## Tab Ownership Rule (multi-tab / multi-course runs)
+One worker = one tab. Act ONLY on your assigned tab (identified by its URL / tab_id). Never navigate, click, fill, or submit in another worker's tab, and never fall back to "the first tab". If your assigned tab is missing or shows a different course, STOP and report it - do not adopt another tab.
+
+## Specialization Completion Rule
+A specialization (e.g. "Course 2/7") is complete ONLY when every course in it is complete. Finishing one course NEVER ends the job: go to the specialization page, list the remaining incomplete courses, and continue with them. Never say "no more courses" based on a single course page - always verify on the specialization page, and report which courses remain if any cannot be completed.

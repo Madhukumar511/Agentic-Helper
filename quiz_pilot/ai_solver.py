@@ -122,11 +122,12 @@ Return ONLY valid JSON matching this schema:
                 "prompt": prompt
             }, f, indent=2)
 
-        # Default fallback: pick first option if completely unattended without key
+        # No key and no host answer: ABSTAIN (previously this silently
+        # guessed option 0 - a coin flip that burned real attempts).
         return {
-            "selected_indices": [0],
-            "confidence": 0.5,
-            "explanation": "Default selection (Configure GEMINI_API_KEY for 100% AI accuracy)."
+            "selected_indices": [],
+            "confidence": 0.0,
+            "explanation": "Abstained: no GEMINI_API_KEY configured and no host answer supplied; left unanswered instead of guessing."
         }
 
     def _parse_json_response(self, text: str, total_options: int) -> Dict[str, Any]:
@@ -141,8 +142,8 @@ Return ONLY valid JSON matching this schema:
             indices = data.get("selected_indices", [])
             # Validate indices are integers within bounds
             valid_indices = [int(i) for i in indices if isinstance(i, (int, str)) and str(i).isdigit() and int(i) < total_options]
-            if not valid_indices and total_options > 0:
-                valid_indices = [0]
+            # Empty stays empty: an unparseable/empty model reply is an
+            # abstention, never a silent guess of option 0.
             
             return {
                 "selected_indices": valid_indices,
@@ -158,4 +159,4 @@ Return ONLY valid JSON matching this schema:
                 if nums:
                     return {"selected_indices": nums, "confidence": 0.8, "explanation": "Extracted via regex."}
 
-            return {"selected_indices": [0], "confidence": 0.5, "explanation": "Fallback parse."}
+            return {"selected_indices": [], "confidence": 0.0, "explanation": "Abstained: could not parse the model reply; left unanswered instead of guessing."}

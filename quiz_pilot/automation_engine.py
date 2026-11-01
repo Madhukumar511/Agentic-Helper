@@ -98,7 +98,7 @@ class AutomationEngine:
 
                     # Solve via AI
                     solution = self.solver.solve_question(q)
-                    selected_indices = solution.get("selected_indices", [0])
+                    selected_indices = solution.get("selected_indices", [])
                     confidence = solution.get("confidence", 0.0)
                     explanation = solution.get("explanation", "")
 

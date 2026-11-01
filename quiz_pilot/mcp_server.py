@@ -21,7 +21,7 @@ from quiz_pilot.lms_adapters import get_lms_adapter
 from quiz_pilot.attempt_protector import FastAttemptManager
 from quiz_pilot.graph_solvers import MulticastSimulator, LamportVectorClockSolver
 from quiz_pilot.diagram_parser import LocalDiagramParser
-from quiz_pilot.browser_launcher import launch_browser, is_browser_running
+from quiz_pilot.browser_launcher import launch_browser, is_browser_running, ensure_browser_visible_once
 from quiz_pilot.tab_scheduler import AsyncTabScheduler
 from quiz_pilot.programming_solver import ProgrammingAssignmentManager
 from quiz_pilot.peer_review_solver import PeerReviewManager
@@ -510,7 +510,8 @@ async def find_assessment_page(browser, target_keyword: Optional[str] = None):
     Prioritizes:
     1. Explicit keyword match in title or URL.
     2. Any page whose URL or Title matches known LMS platforms (coursera, canvas, moodle, blackboard, etc.).
-    3. The first available page.
+    3. The ONLY page, if exactly one tab is open. If several tabs are open and
+       none matches, returns None - never hijack another worker's tab (pages[0]).
     """
     all_pages = []
     for ctx in browser.contexts:
@@ -552,7 +553,12 @@ async def find_assessment_page(browser, target_keyword: Optional[str] = None):
             except Exception:
                 pass
 
-    return all_pages[0]
+    # Tab-ownership rule: NEVER fall back to the first tab when several tabs
+    # are open - that tab may belong to another worker/course. A single open
+    # page may be used implicitly; otherwise the caller must pass tab_keyword.
+    if len(all_pages) == 1:
+        return all_pages[0]
+    return None
 
 
 async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -563,6 +569,20 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         return {"content": [{"type": "text", "text": json.dumps({"success": ok, "message": msg}, indent=2)}]}
 
     cdp_url = arguments.get("cdp_url", "http://127.0.0.1:9222")
+
+    # VISIBILITY (once per server process): if the tool's browser is
+    # already running on the CDP port, raise its window so the user can
+    # SEE the run - the Chrome instance survives between runs, often
+    # minimized or behind the IDE, and every tool used to connect to it
+    # silently (a full run once executed with no visible window).
+    # Never launches anything here: cold starts belong to the
+    # launch_browser tool above.
+    try:
+        _port = int(cdp_url.rsplit(":", 1)[-1].split("/")[0])
+        if is_browser_running(_port):
+            ensure_browser_visible_once(port=_port)
+    except Exception:
+        pass
 
     if name == "solve_multicast":
         mode = arguments["mode"]
@@ -769,16 +789,77 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         elif name == "solve_batch":
             answers = arguments["answers"]
             auto_sub = arguments.get("auto_submit", False)
+            # 80% FLOOR on this path too (previously solve_batch auto-submitted
+            # with NO gate at all). The floor is a wasted-attempt guard, NOT
+            # a score target - the target is the maximum grade, every
+            # question genuinely answered. When auto_submit is requested, count the
+            # questions first; if the supplied answers cover < 80% of them,
+            # fill the known answers only and DO NOT submit (0 attempts used).
+            gate_blocked = False
+            coverage_pct = None
+            total_q = 0
+            unknown_detail = []
+            _qs = []
+            if auto_sub:
+                try:
+                    if hasattr(adapter, "extract_questions_async"):
+                        _qs = await adapter.extract_questions_async()
+                    elif hasattr(adapter, "extract_questions"):
+                        _qs = adapter.extract_questions()
+                        if asyncio.iscoroutine(_qs):
+                            _qs = await _qs
+                    else:
+                        _qs = []
+                    total_q = len(_qs or [])
+                except Exception:
+                    total_q = 0
+                if total_q:
+                    coverage_pct = round(100.0 * len(answers) / total_q, 1)
+                    if coverage_pct < 80.0:
+                        gate_blocked = True
+                        _answered = set()
+                        for _k in answers:
+                            try:
+                                _answered.add(int(_k))
+                            except (TypeError, ValueError):
+                                pass
+                        # The unknown questions go back to the agent WITH
+                        # their text: solving them is the agent's job (the
+                        # human never does a quiz). It works them out and
+                        # re-calls solve_batch with the merged full set -
+                        # still the same single attempt, nothing submitted yet.
+                        for _q in (_qs or []):
+                            _qi = _q.get("index", 0)
+                            if _qi not in _answered:
+                                unknown_detail.append({
+                                    "index": _qi,
+                                    "prompt": _q.get("prompt", ""),
+                                    "options": [
+                                        (o.get("text", "") if isinstance(o, dict) else str(o))
+                                        for o in _q.get("options", [])
+                                    ],
+                                })
+            fill_auto = auto_sub and not gate_blocked
             if hasattr(adapter, "batch_fill_answers_async"):
-                results = await adapter.batch_fill_answers_async(answers, auto_submit=auto_sub)
+                results = await adapter.batch_fill_answers_async(answers, auto_submit=fill_auto)
             elif hasattr(adapter, "batch_fill_answers"):
-                results = adapter.batch_fill_answers(answers, auto_submit=auto_sub)
+                results = adapter.batch_fill_answers(answers, auto_submit=fill_auto)
             else:
                 results = {}
                 for q_idx, val in answers.items():
                     results[str(q_idx)] = await adapter.fill_answer_async(int(q_idx), val)
-                if auto_sub:
+                if fill_auto:
                     await adapter.submit_assessment_async()
+            if gate_blocked:
+                return {"content": [{"type": "text", "text": json.dumps({
+                    "submitted": False,
+                    "status": "NEEDS_REVIEW_NOT_SUBMITTED",
+                    "coverage_pct": coverage_pct,
+                    "unknown_count": total_q - len(answers),
+                    "unknown_questions": unknown_detail,
+                    "message": "Known answers cover < 80% of questions: filled known answers only, did NOT submit (no attempt used). Solve or review the unknown questions, then submit.",
+                    "fill_results": results
+                }, separators=(",", ":"))}]}
             return {"content": [{"type": "text", "text": json.dumps(results, indent=2)}]}
 
         elif name == "submit_assessment":
