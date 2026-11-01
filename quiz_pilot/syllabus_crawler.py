@@ -34,14 +34,19 @@ class SyllabusCrawler:
         target_url = f"https://www.coursera.org/learn/{course_slug}/home/assignments"
         current_url = getattr(self.page, "url", "")
 
-        if target_url not in current_url:
-            await self.page.evaluate("(u) => window.location.href = u", target_url)
+        # Avoid redundant reloads if page is already on assignments view for this course
+        already_on_assignments = f"/learn/{course_slug}" in current_url and "/home/assignments" in current_url
+        if not already_on_assignments:
+            try:
+                await self.page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                await self.page.evaluate("(u) => window.location.href = u", target_url)
 
         # Wait reactively for assignments table to render without blind sleeps
         try:
-            await self.page.wait_for_selector("[class*='css-1qd65r'], div[role='row'], table, div[role='table'], [data-testid='grade-item']", timeout=6000)
+            await self.page.wait_for_selector("table, div[role='table'], div[role='row'], [data-testid='grade-item'], tr", timeout=8000)
         except Exception:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.5)
 
         items = await self.page.evaluate('''() => {
             const results = [];
@@ -138,6 +143,7 @@ class SyllabusCrawler:
             "completed_count": len(deduped) - len(incomplete),
             "pending_count": len(incomplete),
             "all_items": deduped,
+            "assignments": deduped,
             "execution_plan": incomplete
         }
 
