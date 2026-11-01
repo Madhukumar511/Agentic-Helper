@@ -308,10 +308,15 @@ def cmd_solve_all(args):
         console.print(f"[bold cyan]🚀 Starting Smart Multi-Tab Worker Engine (Max Concurrency: {args.concurrency})...[/bold cyan]")
         res = smart_multiworker_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
 
-    console.print(f"[bold green]✓ Completed multi-tab run: {res.get('passed_count', 0)}/{res.get('total_tabs', 0)} passed.[/bold green]")
-    for r in res.get("results", []):
-        status_color = "green" if r.get("passed") else "yellow"
-        console.print(f"[{status_color}]Tab {r.get('tab_index')}: {r.get('title')} -> Score: {r.get('score_pct')}% ({r.get('status')})[/{status_color}]")
+    passed_count = res.get('passed_count', res.get('courses_completed', 0))
+    total_count = res.get('total_tabs', res.get('total_courses_in_spec', res.get('total_processed', 0)))
+    console.print(f"[bold green]✓ Completed multi-tab run: {passed_count}/{total_count} passed.[/bold green]")
+    for r in res.get("results", res.get("items", [])):
+        if isinstance(r, dict):
+            status_color = "green" if r.get("passed") or r.get("status") in ("completed", "passed") else "yellow"
+            score_str = f" -> Score: {r.get('score_pct')}%" if r.get('score_pct') is not None else ""
+            title_str = r.get('title') or r.get('course_title') or r.get('course') or "Item"
+            console.print(f"[{status_color}]{title_str}{score_str} ({r.get('status')})[/{status_color}]")
 
 
 def cmd_inspect_task(args):

@@ -459,6 +459,42 @@ class AsyncTabScheduler:
 
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
 
+            course_urls = [u for u in urls if "/learn/" in u or "/specializations/" in u]
+            if course_urls and len(course_urls) == len(urls):
+                from quiz_pilot.course_orchestrator import CourseOrchestrator
+                orch = CourseOrchestrator(cdp_url=self.cdp_url, max_concurrency=self.max_concurrency)
+                course_semaphore = asyncio.Semaphore(self.max_concurrency)
+
+                async def solve_course_url(u):
+                    async with course_semaphore:
+                        c_pg = await context.new_page()
+                        try:
+                            if "/specializations/" in u:
+                                return await orch.auto_complete_specialization(u)
+                            else:
+                                return await orch.auto_complete_course(u, page=c_pg, context=context, concurrency=1)
+                        finally:
+                            try:
+                                await c_pg.close()
+                            except Exception:
+                                pass
+
+                course_results = await asyncio.gather(*[solve_course_url(u) for u in urls], return_exceptions=True)
+                all_items = []
+                total_passed = 0
+                for r in course_results:
+                    if isinstance(r, dict):
+                        items = r.get("items", []) or r.get("results", []) or r.get("details", [])
+                        all_items.extend(items)
+                        total_passed += sum(1 for it in items if isinstance(it, dict) and (it.get("passed") or it.get("status") == "completed"))
+                return {
+                    "total_tabs": len(urls),
+                    "passed_count": total_passed,
+                    "concurrency": self.max_concurrency,
+                    "results": all_items,
+                    "course_results": course_results
+                }
+
             # Open all tabs
             created_pages = []
             for url in urls:
@@ -555,8 +591,40 @@ class AsyncTabScheduler:
                     if len(spec_pages) == 1:
                         target_page = spec_pages[0]
                     else:
-                        return {"error": "Multiple different course/specialization tabs are open; "
-                                         "cannot tell which one to run. Keep exactly one course tab open."}
+                        from quiz_pilot.course_orchestrator import CourseOrchestrator
+                        orch = CourseOrchestrator(cdp_url=self.cdp_url, max_concurrency=self.max_concurrency)
+                        course_sem = asyncio.Semaphore(min(self.max_concurrency, len(course_pages)))
+
+                        async def run_open_course(pg):
+                            async with course_sem:
+                                import re
+                                m = re.search(r'(https://www\.coursera\.org/(?:organizations/[^/]+/)?learn/[^/?#]+)', pg.url)
+                                c_url = m.group(1) if m else pg.url
+                                return await orch.auto_complete_course(
+                                    course_url=c_url,
+                                    prefer_direct_api=prefer_direct_api,
+                                    page=pg,
+                                    context=context,
+                                    concurrency=1
+                                )
+
+                        tasks = [run_open_course(pg) for pg in course_pages]
+                        batch_res = await asyncio.gather(*tasks, return_exceptions=True)
+                        all_items = []
+                        total_passed = 0
+                        for r in batch_res:
+                            if isinstance(r, dict):
+                                items = r.get("items", []) or r.get("results", [])
+                                all_items.extend(items)
+                                total_passed += sum(1 for it in items if isinstance(it, dict) and (it.get("passed") or it.get("status") == "completed"))
+                        return {
+                            "status": "completed",
+                            "courses_completed": len(course_pages),
+                            "total_tabs": len(course_pages),
+                            "passed_count": total_passed,
+                            "results": all_items,
+                            "details": batch_res
+                        }
                 else:
                     target_page = course_pages[0] if course_pages else None
 

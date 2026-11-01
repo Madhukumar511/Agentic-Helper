@@ -537,10 +537,14 @@ class CourseOrchestrator:
                 if not _progress:
                     break
 
+            passed_cnt = sum(1 for r in results if isinstance(r, dict) and r.get("passed"))
             return {
                 "status": "completed",
                 "course": plan.get("course_slug"),
                 "total_processed": len(results),
+                "total_tabs": len(results),
+                "passed_count": passed_cnt,
+                "results": results,
                 "items": results
             }
 
@@ -599,26 +603,22 @@ class CourseOrchestrator:
                         "course_url": c_info.get("url"),
                         "result": res
                     }
-                    return {
-                        "course_title": c_info.get("title"),
-                        "course_url": c_info.get("url"),
-                        "result": res
-                    }
 
-            # VERIFY each course from its own assignments page: a course only
-            # counts as complete when its execution plan (incomplete items) is
-            # empty. "Attempted" is not "completed" - the old code reported
-            # len(results) as courses_completed, which hid unfinished courses.
-            verify_crawler = SyllabusCrawler(page=page)
-
+            # VERIFY each course from its own assignments page in an isolated tab
             async def verify_course(c_info):
-                plan = await verify_crawler.crawl_course_assignments(c_info["url"])
-                return len(plan.get("execution_plan", [])) == 0
+                v_page = await context.new_page()
+                try:
+                    v_crawler = SyllabusCrawler(page=v_page)
+                    plan = await v_crawler.crawl_course_assignments(c_info["url"])
+                    return len(plan.get("execution_plan", [])) == 0
+                except Exception:
+                    return False
+                finally:
+                    try:
+                        await v_page.close()
+                    except Exception:
+                        pass
 
-            # NOTE: no purge_all() here either - other specializations/courses
-            # may be running concurrently (multi-worker batches) and share the
-            # same cache directory. Cleanup is explicit or per-quiz only.
-            #
             # LOOP until every targeted course VERIFIES complete (or a full
             # pass makes no progress): courses can unlock/appear after earlier
             # ones finish, and one pass is never treated as proof of done.
@@ -631,10 +631,13 @@ class CourseOrchestrator:
                 "status": "completed" if not loop["remaining_items"] else "incomplete",
                 "total_courses_in_spec": len(all_courses),
                 "courses_completed": len(loop["completed_items"]),
+                "total_tabs": len(target_courses),
+                "passed_count": len(loop["completed_items"]),
                 "remaining_courses": [
                     {"title": c.get("title"), "url": c.get("url")}
                     for c in loop["remaining_items"]
                 ],
                 "passes": loop["passes"],
+                "results": loop["results"],
                 "details": loop["results"]
             }
