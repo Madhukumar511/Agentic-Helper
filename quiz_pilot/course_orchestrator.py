@@ -71,9 +71,13 @@ async def _loop_until_complete(items, run_one, verify_one, max_passes: int = 3):
     prev_remaining = None
     while remaining and passes < max_passes:
         passes += 1
-        results = await asyncio.gather(
-            *[run_one(it) for it in remaining], return_exceptions=True
-        )
+        results = []
+        for it in remaining:
+            try:
+                res = await run_one(it)
+            except Exception as e:
+                res = e
+            results.append(res)
         all_results.extend(results)
         still = []
         for it in remaining:
@@ -580,25 +584,22 @@ class CourseOrchestrator:
 
             target_courses = all_courses[:max_courses] if max_courses else all_courses
 
-            course_semaphore = asyncio.Semaphore(min(self.max_concurrency, len(target_courses)))
-
             async def run_single_course(c_info):
-                async with course_semaphore:
-                    c_page = await context.new_page()
+                c_page = await context.new_page()
+                try:
+                    res = await self.auto_complete_course(
+                        course_url=c_info["url"],
+                        prefer_direct_api=prefer_direct_api,
+                        page=c_page,
+                        context=context,
+                        concurrency=self.max_concurrency,
+                    )
+                finally:
                     try:
-                        res = await self.auto_complete_course(
-                            course_url=c_info["url"],
-                            prefer_direct_api=prefer_direct_api,
-                            page=c_page,
-                            context=context,
-                            concurrency=1,
-                        )
-                    finally:
-                        try:
-                            await c_page.close()
-                        except Exception:
-                            pass
-                    return {
+                        await c_page.close()
+                    except Exception:
+                        pass
+                return {
                         "course_title": c_info.get("title"),
                         "course_url": c_info.get("url"),
                         "result": res

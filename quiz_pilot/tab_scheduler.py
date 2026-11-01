@@ -463,30 +463,30 @@ class AsyncTabScheduler:
             if course_urls and len(course_urls) == len(urls):
                 from quiz_pilot.course_orchestrator import CourseOrchestrator
                 orch = CourseOrchestrator(cdp_url=self.cdp_url, max_concurrency=self.max_concurrency)
-                course_semaphore = asyncio.Semaphore(self.max_concurrency)
 
-                async def solve_course_url(u):
-                    async with course_semaphore:
-                        c_pg = await context.new_page()
-                        try:
-                            if "/specializations/" in u:
-                                return await orch.auto_complete_specialization(u)
-                            else:
-                                return await orch.auto_complete_course(u, page=c_pg, context=context, concurrency=1)
-                        finally:
-                            try:
-                                await c_pg.close()
-                            except Exception:
-                                pass
-
-                course_results = await asyncio.gather(*[solve_course_url(u) for u in urls], return_exceptions=True)
+                course_results = []
                 all_items = []
                 total_passed = 0
-                for r in course_results:
+                for u in urls:
+                    c_pg = await context.new_page()
+                    try:
+                        if "/specializations/" in u:
+                            r = await orch.auto_complete_specialization(u)
+                        else:
+                            r = await orch.auto_complete_course(u, page=c_pg, context=context, concurrency=self.max_concurrency)
+                    except Exception as exc:
+                        r = {"error": str(exc), "url": u}
+                    finally:
+                        try:
+                            await c_pg.close()
+                        except Exception:
+                            pass
+                    course_results.append(r)
                     if isinstance(r, dict):
                         items = r.get("items", []) or r.get("results", []) or r.get("details", [])
                         all_items.extend(items)
                         total_passed += sum(1 for it in items if isinstance(it, dict) and (it.get("passed") or it.get("status") == "completed"))
+
                 return {
                     "total_tabs": len(urls),
                     "passed_count": total_passed,
@@ -593,26 +593,25 @@ class AsyncTabScheduler:
                     else:
                         from quiz_pilot.course_orchestrator import CourseOrchestrator
                         orch = CourseOrchestrator(cdp_url=self.cdp_url, max_concurrency=self.max_concurrency)
-                        course_sem = asyncio.Semaphore(min(self.max_concurrency, len(course_pages)))
 
-                        async def run_open_course(pg):
-                            async with course_sem:
-                                import re
-                                m = re.search(r'(https://www\.coursera\.org/(?:organizations/[^/]+/)?learn/[^/?#]+)', pg.url)
-                                c_url = m.group(1) if m else pg.url
-                                return await orch.auto_complete_course(
+                        batch_res = []
+                        all_items = []
+                        total_passed = 0
+                        for pg in course_pages:
+                            import re
+                            m = re.search(r'(https://www\.coursera\.org/(?:organizations/[^/]+/)?learn/[^/?#]+)', pg.url)
+                            c_url = m.group(1) if m else pg.url
+                            try:
+                                r = await orch.auto_complete_course(
                                     course_url=c_url,
                                     prefer_direct_api=prefer_direct_api,
                                     page=pg,
                                     context=context,
-                                    concurrency=1
+                                    concurrency=self.max_concurrency
                                 )
-
-                        tasks = [run_open_course(pg) for pg in course_pages]
-                        batch_res = await asyncio.gather(*tasks, return_exceptions=True)
-                        all_items = []
-                        total_passed = 0
-                        for r in batch_res:
+                            except Exception as exc:
+                                r = {"error": str(exc), "url": pg.url}
+                            batch_res.append(r)
                             if isinstance(r, dict):
                                 items = r.get("items", []) or r.get("results", [])
                                 all_items.extend(items)
