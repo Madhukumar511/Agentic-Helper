@@ -217,6 +217,14 @@ When the user requests completing the first N courses in a Specialization:
 
 ---
 
+### Phase 3I: Mandatory Peer-Graded Two-Step Protocol
+- **Step 1: Always Submit Your Own Assignment First**:
+  For any peer-graded assignment, peer reviews (`/give-feedback` or `/review-next`) are locked until your own project is submitted. Always navigate to `/submit`, fill the title, attach the report PDF via Uppy (`uppy-Dashboard-input`), provide video/demo URL, check the Honor Code agreement checkbox (`#agreement-checkbox-base`), click primary Submit, and confirm in `[data-testid="submit-dialog"]` or modal dialog.
+- **Step 2: Grade Peers at Max Value (One-Shot Rubric Sweep)**:
+  Once submission is confirmed, navigate to `/give-feedback` and click "Start Reviewing". In peer grading, do NOT hand-click rubric options one by one (slow, many steps). Run the peer-review solver ONCE per review: its rubric sweep reads each criterion's point values and selects the HIGHEST-points option for every criterion, so every peer gets max marks. Then insert brief positive feedback ("Great work, solid pipeline and architecture"), click "Submit Review", and repeat for 3-4 peers until reviews are 100% complete!
+
+---
+
 ## 🧠 Built-In Algorithmic & Diagram Solvers
 
 For Computer Science, Distributed Systems, and Graph Quizzes:

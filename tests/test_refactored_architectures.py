@@ -242,6 +242,14 @@ def test_peer_review_rubric_max_points_inspection():
     assert res["status"] in ("completed", "max_reviews_reached")
     # Verify the JS script contained the maxPoints scoring evaluation logic
     assert any("maxPoints" in s for s in p_page.evaluated_scripts)
+    # Regression guard (2026-11-01): peer grading must NEVER go back to random
+    # selection. A bare "maxPoints" string check passed even when the logic
+    # was replaced by Math.random (the variable survived as dead code), so
+    # assert on the actual selection behaviour instead.
+    from quiz_pilot.peer_review_solver import RUBRIC_SELECTION_JS
+    assert "Math.random" not in RUBRIC_SELECTION_JS
+    assert "bestRadio" in RUBRIC_SELECTION_JS and "effectiveScore" in RUBRIC_SELECTION_JS
+    assert not any("Math.random" in s for s in p_page.evaluated_scripts)
 
 
 def test_diagram_parser_removes_blind_selection():

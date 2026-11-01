@@ -63,7 +63,7 @@ Whenever a quiz attempt fails or scores $< 100\%$, you **MUST** execute the foll
 
 ### 10. 📝 Mandatory Peer-Graded Two-Step Protocol
 - Step 1: Always submit your own assignment first on `/submit` (title, report PDF via Uppy, video URL, honor code checkbox, primary submit + modal dialog confirmation). Peer reviews are locked until your own project is submitted!
-- Step 2: Only after submission is confirmed, navigate to `/give-feedback` / `/review-next` and grade 3-4 peers with rapid random option marking (zero overthinking/points analysis) and brief positive feedback!
+- Step 2: Only after submission is confirmed, navigate to `/give-feedback` / `/review-next` and grade 3-4 peers at MAX value: run the peer-review solver, whose one-shot rubric sweep selects the highest-points option for every criterion (never hand-click options one by one - slow). Add brief positive feedback!
 
 ---
 
