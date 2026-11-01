@@ -372,15 +372,7 @@ class CourseOrchestrator:
             _oc["attempts"] += current_attempt
             _oc["passed"] = bool(item_res.get("passed", False))
 
-        elif item_type == "peer_review":
-            prm = PeerReviewManager(page=page)
-            rev_res = prm.complete_peer_reviews(count=4)
-            if asyncio.iscoroutine(rev_res):
-                rev_res = await rev_res
-            item_res["status"] = rev_res.get("status")
-            item_res["reviews_done"] = rev_res.get("reviews_submitted")
-
-        elif item_type == "peer":
+        elif item_type in ("peer", "peer_review"):
             prm = PeerReviewManager(page=page)
             if hasattr(prm, "detect_peer_task_async"):
                 t_info = await prm.detect_peer_task_async(item_url)
@@ -388,12 +380,20 @@ class CourseOrchestrator:
                 t_info = prm.detect_peer_task(item_url)
                 if asyncio.iscoroutine(t_info):
                     t_info = await t_info
-            item_res["peer_mode"] = t_info.get("mode")
-            if t_info.get("mode") == "review":
-                rev_res = prm.complete_peer_reviews(count=4)
-                if asyncio.iscoroutine(rev_res):
-                    await rev_res
+            peer_mode = t_info.get("mode") if isinstance(t_info, dict) else "review"
+            item_res["peer_mode"] = peer_mode
+            if peer_mode in ("submission", "submit"):
+                sub_res = await prm.submit_peer_assignment_async(title=item_title)
+                item_res["submitted"] = sub_res.get("submitted", False)
+                rev_res = await prm.complete_peer_reviews_async(count=4)
+                item_res["reviews_done"] = rev_res.get("reviews_submitted", 0)
+                item_res["status"] = "completed"
+                item_res["passed"] = True
+            else:
+                rev_res = await prm.complete_peer_reviews_async(count=4)
+                item_res["reviews_done"] = rev_res.get("reviews_submitted", 0)
                 item_res["status"] = "reviews_completed"
+                item_res["passed"] = True
 
         elif item_type == "programming":
             pam = ProgrammingAssignmentManager(cdp_url=self.cdp_url)

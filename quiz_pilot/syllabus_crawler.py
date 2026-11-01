@@ -144,7 +144,7 @@ class SyllabusCrawler:
                 let itemType = 'quiz';
                 if (/programming/i.test(text) || /programming/i.test(href)) {
                     itemType = 'programming';
-                } else if (/peer/i.test(text) || /peer/i.test(href)) {
+                } else if (/peer|assignment-submission|peer-assignment/i.test(text) || /peer|assignment-submission|peer-assignment/i.test(href)) {
                     itemType = 'peer';
                 } else if (/review/i.test(text) || /review/i.test(href)) {
                     itemType = 'peer_review';

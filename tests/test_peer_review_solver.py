@@ -2,6 +2,7 @@
 Unit tests for PeerReviewManager and Peer Assignment Solvers.
 """
 
+import os
 import pytest
 from quiz_pilot.peer_review_solver import PeerReviewManager, DEFAULT_PEER_FEEDBACKS
 from quiz_pilot.mcp_server import TOOLS
@@ -32,6 +33,22 @@ def test_peer_task_detection():
         text="Cloud Intro Quiz Question 1"
     )
     assert info_quiz["is_peer"] is False
+
+    # Test assignment-submission URL (Coursera peer variant)
+    info_asgn = prm.detect_peer_task(
+        url="https://www.coursera.org/learn/cloud-networking/assignment-submission/5EXRb/software-defined-networking",
+        text="Loading..."
+    )
+    assert info_asgn["is_peer"] is True
+    assert info_asgn["mode"] == "submission"
+
+def test_generate_default_report():
+    prm = PeerReviewManager()
+    pdf_path = prm._generate_default_report("SDN Network Test Report")
+    assert os.path.exists(pdf_path)
+    with open(pdf_path, "rb") as f:
+        header = f.read(5)
+    assert header == b"%PDF-"
 
 def test_peer_submission_missing_file_raises():
     prm = PeerReviewManager(page=None)
