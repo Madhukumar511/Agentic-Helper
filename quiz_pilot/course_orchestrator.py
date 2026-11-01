@@ -37,6 +37,49 @@ async def _dedicated_page(context, url_hint: str):
     return await context.new_page()
 
 
+async def _loop_until_complete(items, run_one, verify_one, max_passes: int = 3):
+    """Runs items, then VERIFIES each one, and repeats for whatever is still
+    incomplete - until everything verifies complete, a full pass makes no
+    progress, or max_passes is reached.
+
+    This exists because "we ran the course once" is not "the course is
+    complete": Coursera items can stay pending (locked, failed, or newly
+    appeared), and a specialization is only done when EVERY course in it
+    verifies complete. verify_one(item) must return True only when the
+    item genuinely has nothing left to do.
+    """
+    remaining = list(items)
+    all_results = []
+    passes = 0
+    prev_remaining = None
+    while remaining and passes < max_passes:
+        passes += 1
+        results = await asyncio.gather(
+            *[run_one(it) for it in remaining], return_exceptions=True
+        )
+        all_results.extend(results)
+        still = []
+        for it in remaining:
+            try:
+                done = await verify_one(it)
+            except Exception:
+                done = False
+            if not done:
+                still.append(it)
+        if prev_remaining is not None and len(still) >= prev_remaining:
+            remaining = still
+            break  # a full pass made no progress - report honestly, do not spin
+        prev_remaining = len(still)
+        remaining = still
+    completed = [it for it in items if it not in remaining]
+    return {
+        "completed_items": completed,
+        "remaining_items": remaining,
+        "passes": passes,
+        "results": all_results,
+    }
+
+
 class CourseOrchestrator:
     """End-to-end autonomous course execution engine."""
 
@@ -387,18 +430,36 @@ class CourseOrchestrator:
                         "result": res
                     }
 
-            course_results = await asyncio.gather(
-                *[run_single_course(c) for c in target_courses],
-                return_exceptions=False
-            )
+            # VERIFY each course from its own assignments page: a course only
+            # counts as complete when its execution plan (incomplete items) is
+            # empty. "Attempted" is not "completed" - the old code reported
+            # len(results) as courses_completed, which hid unfinished courses.
+            verify_crawler = SyllabusCrawler(page=page)
+
+            async def verify_course(c_info):
+                plan = await verify_crawler.crawl_course_assignments(c_info["url"])
+                return len(plan.get("execution_plan", [])) == 0
 
             # NOTE: no purge_all() here either - other specializations/courses
             # may be running concurrently (multi-worker batches) and share the
             # same cache directory. Cleanup is explicit or per-quiz only.
+            #
+            # LOOP until every targeted course VERIFIES complete (or a full
+            # pass makes no progress): courses can unlock/appear after earlier
+            # ones finish, and one pass is never treated as proof of done.
+            loop = await _loop_until_complete(
+                target_courses, run_single_course, verify_course, max_passes=3
+            )
 
             return {
                 "specialization": spec_url,
+                "status": "completed" if not loop["remaining_items"] else "incomplete",
                 "total_courses_in_spec": len(all_courses),
-                "courses_completed": len(course_results),
-                "details": course_results
+                "courses_completed": len(loop["completed_items"]),
+                "remaining_courses": [
+                    {"title": c.get("title"), "url": c.get("url")}
+                    for c in loop["remaining_items"]
+                ],
+                "passes": loop["passes"],
+                "details": loop["results"]
             }

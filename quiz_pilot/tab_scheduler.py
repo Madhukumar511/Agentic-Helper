@@ -403,10 +403,36 @@ class AsyncTabScheduler:
                 import re
                 m = re.search(r'(https://www\.coursera\.org/learn/[^/?#]+)', current_url)
                 course_base_url = m.group(1) if m else current_url
-                return await orch.auto_complete_course(
+                course_result = await orch.auto_complete_course(
                     course_url=course_base_url,
                     prefer_direct_api=prefer_direct_api
                 )
+                # A single course inside a Specialization is NOT the whole job:
+                # the certificate needs EVERY course in the specialization.
+                # If this course page links to a specialization, continue with
+                # the remaining courses instead of stopping after one course
+                # (previously: completed one course, then wrongly reported
+                # "no other courses").
+                spec_url = None
+                try:
+                    spec_url = await target_page.evaluate(
+                        "() => { const a = document.querySelector('a[href*=\"/specializations/\"]'); "
+                        "return a ? a.href.split('?')[0] : null; }"
+                    )
+                except Exception:
+                    spec_url = None
+                if spec_url:
+                    spec_result = await orch.auto_complete_specialization(
+                        spec_url=spec_url,
+                        prefer_direct_api=prefer_direct_api
+                    )
+                    return {
+                        "course_result": course_result,
+                        "specialization_result": spec_result,
+                        "note": "Course belongs to a specialization; continued "
+                                "with its remaining courses.",
+                    }
+                return course_result
 
             # Fallback: run on whatever assessment tabs are open
             return await self.run_parallel_batch(auto_submit=auto_submit)

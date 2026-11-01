@@ -257,3 +257,6 @@ causal_res = sim.simulate_causal(num_processes=4, multicasts=mcasts, arrivals=ar
 
 ## Tab Ownership Rule (multi-tab / multi-course runs)
 One worker = one tab. Act ONLY on your assigned tab (identified by its URL / tab_id). Never navigate, click, fill, or submit in another worker's tab, and never fall back to "the first tab". If your assigned tab is missing or shows a different course, STOP and report it - do not adopt another tab.
+
+## Specialization Completion Rule
+A specialization (e.g. "Course 2/7") is complete ONLY when every course in it is complete. Finishing one course NEVER ends the job: go to the specialization page, list the remaining incomplete courses, and continue with them. Never say "no more courses" based on a single course page - always verify on the specialization page, and report which courses remain if any cannot be completed.
