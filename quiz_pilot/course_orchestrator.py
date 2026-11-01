@@ -283,11 +283,9 @@ class CourseOrchestrator:
             item_res["status"] = rev_res.get("status")
             item_res["reviews_done"] = rev_res.get("reviews_submitted")
 
-        elif item_type == "peer":
+        elif item_type in ("peer", "peer_review"):
             prm = PeerReviewManager(page=page)
-            t_info = prm.detect_peer_task(item_url)
-            if asyncio.iscoroutine(t_info):
-                t_info = await t_info
+            t_info = await prm.detect_peer_task_async(item_url)
             item_res["peer_mode"] = t_info.get("mode")
             if t_info.get("mode") == "submit":
                 sub_res = prm.submit_peer_assignment(title=item_title)

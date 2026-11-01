@@ -57,9 +57,14 @@ class PeerReviewManager:
             url = getattr(self.page, "url", "")
         if not text and self.page:
             try:
-                text = self.page.evaluate("() => document.body.innerText")
+                res = self.page.evaluate("() => document.body.innerText")
+                if asyncio.iscoroutine(res):
+                    text = ""
+                else:
+                    text = str(res or "")
             except Exception:
                 text = ""
+        text = str(text or "")
 
         is_peer = "/peer/" in url or "peer-graded" in text.lower() or "peer-options" in text.lower()
         if not is_peer:
@@ -80,6 +85,20 @@ class PeerReviewManager:
             "url": url,
             "reviews_left": reviews_left
         }
+
+    async def detect_peer_task_async(self, url: str = "", text: str = "") -> Dict[str, Any]:
+        """Detect if the current page is a peer submission or review task (async)."""
+        if not url and self.page:
+            url = getattr(self.page, "url", "")
+        if not text and self.page:
+            try:
+                res = self.page.evaluate("() => document.body.innerText")
+                if asyncio.iscoroutine(res):
+                    res = await res
+                text = str(res or "")
+            except Exception:
+                text = ""
+        return self.detect_peer_task(url=url, text=str(text or ""))
 
     def submit_peer_assignment(
         self,
