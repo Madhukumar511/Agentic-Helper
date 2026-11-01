@@ -345,7 +345,8 @@ class CourseOrchestrator:
         course_url: str,
         prefer_direct_api: bool = True,
         page: Optional[Any] = None,
-        context: Optional[Any] = None
+        context: Optional[Any] = None,
+        concurrency: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Autonomously discovers and completes an entire course:
@@ -376,7 +377,8 @@ class CourseOrchestrator:
                     direct_api = None
 
             # 2. Multi-Tab Parallel Execution across pending assignments / modules
-            num_workers = min(self.max_concurrency, len(pending_items))
+            eff_concurrency = concurrency if concurrency is not None else self.max_concurrency
+            num_workers = min(eff_concurrency, len(pending_items))
             if num_workers <= 1 or not active_context:
                 for item in pending_items:
                     res = await self._solve_item_on_page(active_page, item, direct_api=direct_api)
@@ -469,7 +471,8 @@ class CourseOrchestrator:
                             course_url=c_info["url"],
                             prefer_direct_api=prefer_direct_api,
                             page=c_page,
-                            context=context
+                            context=context,
+                            concurrency=1
                         )
                         return {
                             "course_title": c_info.get("title"),
