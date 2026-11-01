@@ -74,12 +74,14 @@ class _FakePage:
 
 
 class _FakeAdapter:
-    def __init__(self, n_questions=5):
+    def __init__(self, n_questions=5, feedback_queue=None):
         self.questions = [
             {"index": i, "prompt": f"Q{i}?", "options": OPTS} for i in range(n_questions)
         ]
         self.filled = None
         self.submitted = False
+        self.submit_count = 0
+        self._feedback_queue = list(feedback_queue) if feedback_queue else None
 
     async def extract_questions_async(self):
         return self.questions
@@ -90,18 +92,23 @@ class _FakeAdapter:
 
     async def submit_assessment_async(self):
         self.submitted = True
+        self.submit_count += 1
         return True
 
     async def extract_feedback_async(self):
+        if self._feedback_queue:
+            if len(self._feedback_queue) > 1:
+                return self._feedback_queue.pop(0)
+            return self._feedback_queue[0]
         return {"score_pct": 100.0, "passed": True,
                 "feedback": {q["index"]: True for q in self.questions}}
 
 
-def _run_scheduler(tmp_path, monkeypatch, generator):
+def _run_scheduler(tmp_path, monkeypatch, generator, feedback_queue=None):
     import quiz_pilot.tab_scheduler as ts_mod
     from quiz_pilot.tab_scheduler import AsyncTabScheduler
 
-    adapter = _FakeAdapter()
+    adapter = _FakeAdapter(feedback_queue=feedback_queue)
     monkeypatch.setattr(ts_mod, "get_lms_adapter", lambda page: adapter)
     monkeypatch.chdir(tmp_path)
     sched = AsyncTabScheduler()
@@ -134,6 +141,7 @@ def test_scheduler_submits_above_gate_and_records_real_attempt_numbers(tmp_path,
     gen = lambda qs: {0: 0, 1: 1, 2: 2, 3: 0}  # 4 of 5 = 80%
     _, adapter, result = _run_scheduler(tmp_path, monkeypatch, gen)
     assert adapter.submitted is True
+    assert adapter.submit_count == 1  # a PASS is final - never retaken to improve
     assert result["status"] in ("PASSED", "COMPLETED")
     files = [f for f in os.listdir(tmp_path) if "_attempt_" in f]
     assert any(f.endswith("_attempt_1.json") for f in files), files
@@ -145,12 +153,97 @@ def test_scheduler_submits_above_gate_and_records_real_attempt_numbers(tmp_path,
     assert any(f.endswith("_attempt_2.json") for f in files), files
 
 
-def test_orchestrator_single_attempt_guard():
+def test_orchestrator_attempt_outcome_guard():
+    """Pass = final (blocked). Fail = re-attempts allowed through, until
+    it passes (a failed quiz = no certificate). Only the 10-attempt
+    safety cap blocks a failing quiz (user policy 2026-11-01)."""
     from quiz_pilot.course_orchestrator import CourseOrchestrator
 
-    orch = CourseOrchestrator()
-    orch._run_attempted_quizzes.add("Quiz X")
     item = {"title": "Quiz X", "type": "quiz",
             "url": "https://www.coursera.org/learn/demo/quiz/1"}
+
+    orch = CourseOrchestrator()
+    orch._run_quiz_outcomes["Quiz X"] = {"attempts": 1, "passed": True}
     res = asyncio.run(orch._solve_item_on_page(_FakePage(), item))
-    assert res["status"] == "skipped_single_attempt_policy"
+    assert res["status"] == "skipped_already_passed"
+
+    orch = CourseOrchestrator()
+    orch._run_quiz_outcomes["Quiz X"] = {"attempts": 10, "passed": False}
+    res = asyncio.run(orch._solve_item_on_page(_FakePage(), item))
+    assert res["status"] == "skipped_attempt_cap"
+
+    # A failed quiz (any attempt count under the cap) is let through to
+    # be re-attempted - failing quizzes are retried until they pass.
+    orch = CourseOrchestrator()
+    orch._run_quiz_outcomes["Quiz X"] = {"attempts": 2, "passed": False}
+    res = asyncio.run(orch._solve_item_on_page(_FlowPage(), item))
+    assert res["status"] not in ("skipped_already_passed", "skipped_attempt_cap")
+
+
+class _FlowPage(_FakePage):
+    """Page stub that survives the solve flow with zero extractable questions."""
+
+    async def evaluate(self, script, *args):
+        if "window.location.href" in str(script):
+            return None
+        return []
+
+    async def goto(self, *args, **kwargs):
+        return None
+
+    async def wait_for_selector(self, *args, **kwargs):
+        return None
+
+
+class _StatefulGenerator:
+    """Answers 4 of 5 on the first call (80% coverage), nothing afterwards -
+    the retry must then be driven by attempt-1 feedback in memory."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, questions):
+        self.calls += 1
+        if self.calls == 1:
+            return {0: 0, 1: 1, 2: 2, 3: 0}
+        return {}
+
+
+_FAIL_FB = {"score_pct": 40.0, "passed": False,
+            "feedback": {i: False for i in range(5)}}
+_PASS_FB = {"score_pct": 100.0, "passed": True,
+            "feedback": {i: True for i in range(5)}}
+
+
+def test_scheduler_one_retry_after_fail_then_pass(tmp_path, monkeypatch):
+    gen = _StatefulGenerator()
+    _, adapter, result = _run_scheduler(
+        tmp_path, monkeypatch, gen, feedback_queue=[_FAIL_FB, _PASS_FB])
+    assert adapter.submit_count == 2          # failed once -> exactly one retry
+    assert result["attempts_used"] == 2
+    assert result["passed"] is True
+    files = [f for f in os.listdir(tmp_path) if "_attempt_" in f]
+    assert any(f.endswith("_attempt_1.json") for f in files), files
+    assert any(f.endswith("_attempt_2.json") for f in files), files
+
+
+def test_scheduler_retries_until_pass_third_attempt(tmp_path, monkeypatch):
+    gen = _StatefulGenerator()
+    _, adapter, result = _run_scheduler(
+        tmp_path, monkeypatch, gen, feedback_queue=[_FAIL_FB, _FAIL_FB, _PASS_FB])
+    assert adapter.submit_count == 3          # kept going until it passed
+    assert result["attempts_used"] == 3
+    assert result["passed"] is True
+
+
+def test_scheduler_retries_until_no_new_answers_then_stops(tmp_path, monkeypatch):
+    # Feedback is always "all wrong": each retry eliminates the submitted
+    # options, so attempts continue until no un-eliminated answers remain
+    # (coverage falls under the floor) - then it stops and reports the fail
+    # honestly instead of looping forever or guessing.
+    gen = _StatefulGenerator()
+    _, adapter, result = _run_scheduler(
+        tmp_path, monkeypatch, gen, feedback_queue=[_FAIL_FB])
+    assert adapter.submit_count == 3
+    assert result["attempts_used"] == 3
+    assert result["passed"] is False

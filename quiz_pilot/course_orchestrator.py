@@ -103,11 +103,13 @@ class CourseOrchestrator:
         self.cdp_url = cdp_url
         self.max_concurrency = max_concurrency
         self.attempt_mgr = FastAttemptManager()
-        # Single-attempt policy: quiz keys already submitted during THIS
-        # run (across courses and specialization passes). A quiz gets at
-        # most ONE submitted attempt per run - retries burn the user's
-        # limited attempts and double token/time cost.
-        self._run_attempted_quizzes = set()
+        # Attempt policy registry, per quiz, for THIS run (across courses
+        # and specialization passes): {"attempts": n, "passed": bool}.
+        # PASS is final - never retaken to improve a score. FAIL means
+        # keep re-attempting UNTIL IT PASSES (a failed quiz = no
+        # certificate). The 10-attempt cap is only an infinite-loop
+        # guard; Coursera's own attempt limits may stop it sooner.
+        self._run_quiz_outcomes = {}
 
     @staticmethod
     def _extract_questions_from_api_data(api_data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -179,10 +181,17 @@ class CourseOrchestrator:
         }
 
         if item_type == "quiz":
-            if item_title in self._run_attempted_quizzes:
-                item_res["status"] = "skipped_single_attempt_policy"
-                item_res["note"] = "Already attempted once in this run; single-attempt policy - not retried."
-                return item_res
+            _prev = self._run_quiz_outcomes.get(item_title)
+            if _prev is not None:
+                if _prev.get("passed"):
+                    item_res["status"] = "skipped_already_passed"
+                    item_res["note"] = "Passed earlier in this run; a pass is final - never retaken to improve the score."
+                    return item_res
+                if _prev.get("attempts", 0) >= 10:
+                    item_res["status"] = "skipped_attempt_cap"
+                    item_res["note"] = "Safety cap of 10 attempts in one run reached; quiz reported failed."
+                    return item_res
+                # else: fall through - a failed quiz is re-attempted until it passes.
             # 1. Direct REST/GraphQL API attempt if configured
             if direct_api:
                 try:
@@ -216,7 +225,6 @@ class CourseOrchestrator:
                                     if parts_payload:
                                         sub_res = await direct_api.submit_answers(assessment_id, parts_payload)
                                         if sub_res and sub_res.get("success"):
-                                            self._run_attempted_quizzes.add(item_title)
                                             submission_id = (
                                                 sub_res.get("data", {}).get("id")
                                                 or sub_res.get("submission_id")
@@ -260,6 +268,9 @@ class CourseOrchestrator:
                                             except Exception:
                                                 pass
 
+                                            _oc = self._run_quiz_outcomes.setdefault(item_title, {"attempts": 0, "passed": False})
+                                            _oc["attempts"] += 1
+                                            _oc["passed"] = bool(passed)
                                             item_res["status"] = "submitted_direct_api"
                                             item_res["assessment_id"] = assessment_id
                                             item_res["questions_solved"] = len(api_questions)
@@ -306,7 +317,6 @@ class CourseOrchestrator:
                 # Explicit modal submission with confirmation dialog (the one
                 # and only attempt for this quiz in this run)
                 await adapter.submit_assessment_async()
-                self._run_attempted_quizzes.add(item_title)
 
                 try:
                     fb = await adapter.extract_feedback_async()
@@ -324,6 +334,9 @@ class CourseOrchestrator:
                 except Exception:
                     pass
 
+                _oc = self._run_quiz_outcomes.setdefault(item_title, {"attempts": 0, "passed": False})
+                _oc["attempts"] += 1
+                _oc["passed"] = bool(item_res.get("passed", False))
                 item_res["status"] = "submitted"
                 item_res["questions_solved"] = len(questions)
 
@@ -430,6 +443,39 @@ class CourseOrchestrator:
             # executes per course IN PARALLEL - purging the shared cache when
             # one course finishes would wipe the memory of courses still
             # running. Cleanup is explicit (CLI clean) or per-quiz.
+
+            # FAIL-RETRY-UNTIL-PASS (user policy): a FAILED quiz blocks the
+            # certificate, so failed quizzes are re-attempted - each round
+            # with the latest feedback in memory (correct answers locked,
+            # wrong options eliminated, failed questions re-solved) - UNTIL
+            # THEY PASS. Passed quizzes are final, never retaken to improve
+            # a score. The 9 rounds are only an infinite-loop guard; a quiz
+            # whose answers run out (gate) or that errors drops out of the
+            # loop and is reported with its real attempt count.
+            for _round in range(9):
+                _failed = [
+                    r for r in results
+                    if r.get("status") in ("submitted", "submitted_direct_api")
+                    and r.get("passed") is False
+                ]
+                if not _failed:
+                    break
+                _by_title = {r.get("title"): r for r in results}
+                _progress = False
+                for _fr in _failed:
+                    _item = next((it for it in pending_items if it.get("title") == _fr.get("title")), None)
+                    if _item is None:
+                        continue
+                    try:
+                        _retry_res = await self._solve_item_on_page(page, _item, direct_api=direct_api)
+                    except Exception:
+                        continue
+                    _retry_res["retry_after_fail"] = True
+                    _by_title[_fr.get("title")] = _retry_res
+                    _progress = True
+                results = list(_by_title.values())
+                if not _progress:
+                    break
 
             return {
                 "status": "completed",

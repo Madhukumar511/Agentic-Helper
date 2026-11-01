@@ -215,6 +215,7 @@ class AsyncTabScheduler:
                 elif auto_submit:
                     await adapter.submit_assessment_async()
                     result["submitted"] = True
+                    result["attempts_used"] = 1
                     await asyncio.sleep(0.5)
 
                     try:
@@ -241,6 +242,69 @@ class AsyncTabScheduler:
                         )
                     except Exception:
                         pass
+                    # FAIL-RETRY UNTIL PASS (user policy): a PASS is final
+                    # and is never retaken to improve the score, but a FAILED
+                    # quiz means NO certificate - so after a fail the agent
+                    # keeps re-attempting, each time using the latest feedback
+                    # (correct answers locked, wrong options eliminated,
+                    # failed questions re-solved), UNTIL THE QUIZ PASSES.
+                    # Rounds stop early only when there is nothing new to
+                    # submit (no questions extractable, or known answers
+                    # under the 80% floor) or after 9 retries (loop guard).
+                    _retry_rounds = 0
+                    while result.get("passed") is False and _retry_rounds < 9:
+                        _retry_rounds += 1
+                        try:
+                            retry_questions = await adapter.extract_questions_async()
+                        except Exception:
+                            retry_questions = []
+                        if not retry_questions:
+                            break
+                        r_answers = self.attempt_mgr.get_retry_answers(retry_questions, quiz_id=quiz_key)
+                        if answer_generator:
+                            try:
+                                _gen2 = answer_generator(retry_questions)
+                                if _gen2:
+                                    r_answers.update(_gen2)
+                            except Exception:
+                                pass
+                        _r_known = {
+                            q.get("index", 0) for q in retry_questions
+                            if q.get("index", 0) in r_answers or str(q.get("index", 0)) in r_answers
+                        }
+                        if (len(_r_known) / len(retry_questions)) < 0.80:
+                            break
+                        if hasattr(adapter, "batch_fill_answers_async"):
+                            await adapter.batch_fill_answers_async(r_answers, auto_submit=False)
+                        elif hasattr(adapter, "batch_fill_answers"):
+                            adapter.batch_fill_answers(r_answers, auto_submit=False)
+                        else:
+                            for _qi, _qv in r_answers.items():
+                                await adapter.fill_answer_async(int(_qi), _qv)
+                        await adapter.submit_assessment_async()
+                        result["attempts_used"] = result.get("attempts_used", 1) + 1
+                        await asyncio.sleep(0.5)
+                        try:
+                            fb2 = await adapter.extract_feedback_async()
+                        except Exception:
+                            fb2 = {}
+                        result["score_pct"] = fb2.get("score_pct")
+                        result["passed"] = fb2.get("passed", False)
+                        result["status"] = "PASSED" if result["passed"] else "COMPLETED"
+                        try:
+                            fb_map2 = fb2.get("feedback")
+                            if fb_map2 is None:
+                                fb_map2 = {q["index"]: fb2.get("passed", False) for q in retry_questions} if fb2.get("passed") else {}
+                            self.attempt_mgr.record_attempt(
+                                quiz_id=quiz_key,
+                                attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
+                                questions=retry_questions,
+                                answers=r_answers,
+                                feedback=fb_map2,
+                                score_pct=fb2.get("score_pct")
+                            )
+                        except Exception:
+                            pass
                 else:
                     result["status"] = "ANSWERS_FILLED"
 
