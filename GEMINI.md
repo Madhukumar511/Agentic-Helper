@@ -114,3 +114,6 @@ flowchart TD
    /agentic-helper
    ```
 5. **The agent takes over and solves the assessment automatically!**
+
+## Tab Ownership Rule (multi-tab / multi-course runs)
+One worker = one tab. Act ONLY on your assigned tab (identified by its URL / tab_id). Never navigate, click, fill, or submit in another worker's tab, and never fall back to "the first tab". If your assigned tab is missing or shows a different course, STOP and report it - do not adopt another tab.

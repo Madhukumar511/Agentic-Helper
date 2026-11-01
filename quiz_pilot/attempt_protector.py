@@ -14,12 +14,78 @@ Enforces:
 
 import os
 import re
+import time
+import functools
 import shutil
 import json
 import hashlib
 import tempfile
 from typing import Dict, List, Optional, Any, Tuple
 
+
+
+_CACHE_LOCK_FILE = os.path.join(tempfile.gettempdir(), "agentic_helper_cache.lock")
+_CACHE_LOCK_STATE = {"fd": None, "depth": 0}
+
+
+class _CacheFileLock:
+    """Best-effort cross-process lock serializing .assessment_cache I/O.
+
+    Parallel tab workers - and separate agent processes in multi-worker
+    batches - share ONE cache directory and ONE quiz_analysis.md. Without
+    serialization their writes interleave and stomp each other. This lock
+    is re-entrant within a process (record_attempt calls save/export) and
+    degrades to unlocked after a 5 s wait rather than deadlocking a run; a
+    stale lock left by a crashed process therefore costs at most 5 s.
+    """
+
+    def __enter__(self):
+        if _CACHE_LOCK_STATE["depth"] > 0:
+            _CACHE_LOCK_STATE["depth"] += 1
+            return self
+        deadline = time.time() + 5.0
+        while True:
+            try:
+                _CACHE_LOCK_STATE["fd"] = os.open(
+                    _CACHE_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                )
+                break
+            except FileExistsError:
+                if time.time() > deadline:
+                    break  # proceed unlocked rather than deadlock
+                time.sleep(0.05)
+            except OSError:
+                break
+        _CACHE_LOCK_STATE["depth"] = 1
+        return self
+
+    def __exit__(self, *exc):
+        _CACHE_LOCK_STATE["depth"] -= 1
+        if _CACHE_LOCK_STATE["depth"] <= 0:
+            _CACHE_LOCK_STATE["depth"] = 0
+            fd = _CACHE_LOCK_STATE["fd"]
+            _CACHE_LOCK_STATE["fd"] = None
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                try:
+                    os.remove(_CACHE_LOCK_FILE)
+                except OSError:
+                    pass
+        return False
+
+
+def _serialized(fn):
+    """Runs a FastAttemptManager cache-mutating method under _CacheFileLock."""
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with _CacheFileLock():
+            return fn(self, *args, **kwargs)
+
+    return wrapper
 
 class FastAttemptManager:
     """
@@ -73,6 +139,7 @@ class FastAttemptManager:
         content = f"{q_type}::{norm_prompt}::options::{norm_opts}"
         return hashlib.sha256(content.encode("utf-8")).hexdigest()[:24]
 
+    @_serialized
     def save_attempt(
         self,
         quiz_id: str,
@@ -190,6 +257,7 @@ class FastAttemptManager:
                 return True
         return False
 
+    @_serialized
     def record_attempt(
         self,
         quiz_id: str,
@@ -389,6 +457,7 @@ class FastAttemptManager:
 
         return answers
 
+    @_serialized
     def export_quiz_analysis_markdown(
         self,
         quiz_id: str,
@@ -594,6 +663,7 @@ class FastAttemptManager:
 
         return self.quiz_memory
 
+    @_serialized
     def purge_cache(self, quiz_id: Optional[str] = None):
         """
         Clean up law: Purge temporary files when quiz is passed or on finalization.
@@ -608,6 +678,7 @@ class FastAttemptManager:
         else:
             self.purge_all()
 
+    @_serialized
     def purge_all(self):
         """
         Full Zero-Artifact cleanup: Wipes all temporary attempt files, JSON, Markdown,

@@ -510,7 +510,8 @@ async def find_assessment_page(browser, target_keyword: Optional[str] = None):
     Prioritizes:
     1. Explicit keyword match in title or URL.
     2. Any page whose URL or Title matches known LMS platforms (coursera, canvas, moodle, blackboard, etc.).
-    3. The first available page.
+    3. The ONLY page, if exactly one tab is open. If several tabs are open and
+       none matches, returns None - never hijack another worker's tab (pages[0]).
     """
     all_pages = []
     for ctx in browser.contexts:
@@ -552,7 +553,12 @@ async def find_assessment_page(browser, target_keyword: Optional[str] = None):
             except Exception:
                 pass
 
-    return all_pages[0]
+    # Tab-ownership rule: NEVER fall back to the first tab when several tabs
+    # are open - that tab may belong to another worker/course. A single open
+    # page may be used implicitly; otherwise the caller must pass tab_keyword.
+    if len(all_pages) == 1:
+        return all_pages[0]
+    return None
 
 
 async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:

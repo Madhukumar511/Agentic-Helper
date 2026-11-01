@@ -85,6 +85,7 @@ class AsyncTabScheduler:
         page: Page,
         tab_index: int,
         semaphore: asyncio.Semaphore,
+        expected_url: str = None,
         answer_generator: Optional[Callable[[List[Dict[str, Any]]], Dict[int, Any]]] = None,
         auto_submit: bool = True
     ) -> Dict[str, Any]:
@@ -112,6 +113,38 @@ class AsyncTabScheduler:
                 "error": None
             }
 
+            # TAB OWNERSHIP: this worker acts ONLY on its assigned tab/URL.
+            # If the tab no longer shows the assigned work (another worker
+            # navigated it), try ONE re-navigation to our own URL; if that
+            # fails, abort WITHOUT touching whatever foreign assessment is
+            # now displayed - never adopt another worker's tab.
+            assigned_url = (expected_url or url or "").split("?")[0].rstrip("/")
+            current_base = ""
+            try:
+                current_base = (page.url or "").split("?")[0].rstrip("/")
+            except Exception:
+                pass
+            if assigned_url and current_base and current_base != assigned_url:
+                try:
+                    await page.goto(expected_url, wait_until="commit")
+                    current_base = (page.url or "").split("?")[0].rstrip("/")
+                except Exception:
+                    pass
+                if current_base != assigned_url:
+                    result["status"] = "TAB_OWNERSHIP_LOST"
+                    result["error"] = (
+                        f"Tab navigated away from its assigned URL ({assigned_url}); "
+                        "aborted without touching another tab's work."
+                    )
+                    return result
+
+            # Per-tab quiz identity: title ALONE collides across workers
+            # (two courses can hold same-titled quizzes and would share
+            # one memory file). Scope memory to this tab's course slug.
+            _slug = assigned_url.rstrip("/").split("/")[-1] if assigned_url else ""
+            quiz_key = f"{title} [{_slug}]" if title else (_slug or f"tab_{tab_index}")
+            result["quiz_key"] = quiz_key
+
             try:
                 adapter = get_lms_adapter(page)
                 
@@ -128,7 +161,7 @@ class AsyncTabScheduler:
                 if answer_generator:
                     answers = answer_generator(questions)
                 else:
-                    answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=title)
+                    answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=quiz_key)
 
                 # Guarantee 100% of questions are answered (never leave any question unanswered)
                 for q in questions:
@@ -166,7 +199,7 @@ class AsyncTabScheduler:
                         if fb_map is None:
                             fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
                         self.attempt_mgr.record_attempt(
-                            quiz_id=title,
+                            quiz_id=quiz_key,
                             attempt_num=1,
                             questions=questions,
                             answers=answers,
@@ -215,7 +248,8 @@ class AsyncTabScheduler:
                     tab_index=idx,
                     semaphore=semaphore,
                     answer_generator=answer_generator,
-                    auto_submit=auto_submit
+                    auto_submit=auto_submit,
+                    expected_url=tab.url
                 )
                 for idx, tab in enumerate(tabs)
             ]
@@ -223,8 +257,15 @@ class AsyncTabScheduler:
             results = await asyncio.gather(*tasks, return_exceptions=False)
             
             passed_count = sum(1 for r in results if r.get("passed"))
-            if passed_count > 0:
-                self.attempt_mgr.purge_all()
+            # Per-quiz cleanup ONLY: purge each passed quiz's own cache files.
+            # (Previously purge_all() fired when ANY tab passed, wiping the
+            # memory of tabs still working - a shared-state collision.)
+            for r in results:
+                if r.get("passed") and r.get("quiz_key"):
+                    try:
+                        self.attempt_mgr.purge_cache(r["quiz_key"])
+                    except Exception:
+                        pass
             return {
                 "total_tabs": len(tabs),
                 "passed_count": passed_count,
@@ -274,7 +315,8 @@ class AsyncTabScheduler:
                     page=tab,
                     tab_index=idx,
                     semaphore=semaphore,
-                    auto_submit=auto_submit
+                    auto_submit=auto_submit,
+                    expected_url=urls[idx]
                 )
                 for idx, tab in enumerate(created_pages)
             ]
@@ -327,9 +369,21 @@ class AsyncTabScheduler:
                 # Solve existing multi-tabs
                 return await self.run_parallel_batch(auto_submit=auto_submit)
 
-            # Determine target URL from the active or first page
-            target_page = context.pages[0] if context.pages else None
+            # Determine the target course/specialization page WITHOUT grabbing
+            # pages[0]: in multi-tab runs the first page may belong to another
+            # worker. Only an unambiguous single course/spec page may route.
+            course_pages = [
+                pg for pg in context.pages
+                if "/specializations/" in pg.url or "/learn/" in pg.url
+            ]
+            distinct_courses = {pg.url.split("?")[0] for pg in course_pages}
+            if len(distinct_courses) > 1:
+                return {"error": "Multiple different course/specialization tabs are open; "
+                                 "cannot tell which one to run. Keep exactly one course tab open."}
+            target_page = course_pages[0] if course_pages else None
             if not target_page:
+                if assessment_tabs:
+                    return await self.run_parallel_batch(auto_submit=auto_submit)
                 return {"error": "No open browser pages found."}
 
             current_url = target_page.url

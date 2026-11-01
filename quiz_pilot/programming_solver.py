@@ -79,7 +79,11 @@ class ProgrammingAssignmentManager:
                 except Exception:
                     pass
 
-        return all_pages[0]
+        # Tab-ownership rule: same as mcp_server - never fall back to the
+        # first tab when several are open; it may be another worker's tab.
+        if len(all_pages) == 1:
+            return all_pages[0]
+        return None
 
     async def extract_task_spec(
         self,

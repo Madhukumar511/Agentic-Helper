@@ -79,3 +79,6 @@ Whenever a quiz attempt fails or scores $< 100\%$, you **MUST** execute the foll
   ensure_browser(url=course_url, port=9222)
   # adapter.extract_questions() -> attempt_mgr.get_retry_answers() -> adapter.batch_fill_answers() -> attempt_mgr.record_attempt()
   ```
+
+## Tab Ownership Rule (multi-tab / multi-course runs)
+One worker = one tab. Act ONLY on your assigned tab (identified by its URL / tab_id). Never navigate, click, fill, or submit in another worker's tab, and never fall back to "the first tab". If your assigned tab is missing or shows a different course, STOP and report it - do not adopt another tab.

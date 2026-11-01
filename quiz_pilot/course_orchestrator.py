@@ -21,6 +21,22 @@ from quiz_pilot.programming_solver import ProgrammingAssignmentManager
 from quiz_pilot.lms_adapters import get_lms_adapter
 from quiz_pilot.attempt_protector import FastAttemptManager
 
+async def _dedicated_page(context, url_hint: str):
+    """Returns a page this orchestrator may safely navigate: an existing page
+    ONLY if it already shows the target course/specialization, otherwise a
+    brand-new tab. Never hijacks pages[0] - in parallel runs that tab may
+    belong to another course's worker, and navigating it away mid-answer
+    is exactly the cross-tab collision this rule exists to prevent."""
+    hint = (url_hint or "").split("?")[0].rstrip("/").lower()
+    for pg in context.pages:
+        try:
+            if hint and hint in pg.url.split("?")[0].rstrip("/").lower():
+                return pg
+        except Exception:
+            pass
+    return await context.new_page()
+
+
 class CourseOrchestrator:
     """End-to-end autonomous course execution engine."""
 
@@ -260,7 +276,7 @@ class CourseOrchestrator:
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(self.cdp_url)
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
-            page = context.pages[0] if context.pages else await context.new_page()
+            page = await _dedicated_page(context, course_url)
 
             # 1. Syllabus Crawl
             crawler = SyllabusCrawler(page=page)
@@ -323,8 +339,10 @@ class CourseOrchestrator:
                     except Exception:
                         pass
 
-            # Clean cache upon completion
-            self.attempt_mgr.purge_all()
+            # NOTE: no purge_all() here. In a specialization run this method
+            # executes per course IN PARALLEL - purging the shared cache when
+            # one course finishes would wipe the memory of courses still
+            # running. Cleanup is explicit (CLI clean) or per-quiz.
 
             return {
                 "status": "completed",
@@ -346,7 +364,7 @@ class CourseOrchestrator:
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(self.cdp_url)
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
-            page = context.pages[0] if context.pages else await context.new_page()
+            page = await _dedicated_page(context, spec_url)
 
             crawler = SyllabusCrawler(page=page)
             all_courses = await crawler.crawl_specialization_courses(spec_url)
@@ -374,8 +392,9 @@ class CourseOrchestrator:
                 return_exceptions=False
             )
 
-            # Clean cache and all temporary files upon specialization completion
-            self.attempt_mgr.purge_all()
+            # NOTE: no purge_all() here either - other specializations/courses
+            # may be running concurrently (multi-worker batches) and share the
+            # same cache directory. Cleanup is explicit or per-quiz only.
 
             return {
                 "specialization": spec_url,
