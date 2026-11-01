@@ -86,9 +86,11 @@ Whenever `/agentic-helper` or an assessment completion request is triggered:
    ```
    *(Or via MCP tool: `smart_multiworker(concurrency=4)`, or CLI: `agentic-helper multiworker --concurrency 4`)*
 
-### Rule 1: ZERO Scratch File Creation (No Course-Specific Scripts)
-* **DO NOT** create one-off Python scripts (such as `solve_c2_hw1.py`, `inspect_submit.py`, `check_grade.py`) in the repository or workspace!
-* The entire engine is already built into `quiz_pilot` and the MCP server.
+### Rule 1: ZERO Scratch Files & Strict Ban on python3 -c (Use Existing Tools Only)
+* **DO NOT** create one-off Python scripts (such as `solve_c2_hw1.py`, `inspect_submit.py`, `check_grade.py`, `script.py`) in the repository or workspace!
+* **DO NOT** execute ad-hoc inline Python commands (`python3 -c "..."`).
+* **DO NOT** take screenshot loops (`agentic-helper screenshot` or `Read(*.png)`).
+* The entire engine is already built into `quiz_pilot` and the MCP server. Use existing tools only (`agentic-helper multiworker "<url>" --concurrency 4` or MCP tools).
 * Execute all operations **in-memory** directly via Playwright, `CourseraAdapter`, or native MCP tool calls (`extract_questions()`, `fill_answer()`, `submit_assessment()`).
 * Keep the repository completely pristine and free of one-off course files.
 

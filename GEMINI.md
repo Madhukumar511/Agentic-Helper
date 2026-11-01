@@ -4,6 +4,20 @@ This document defines how **Google Antigravity IDE** and **Gemini Coding Agents*
 
 ---
 
+## ⛔ IMMUTABLE AGENT LAWS (STRICT ZERO-SCRATCH & NO PYTHON3 -c)
+
+> [!CAUTION]
+> 1. **ZERO SCRATCH FILES**: Under NO circumstances may any agent create, generate, or write one-off Python files (e.g. `solve_*.py`, `test_*.py`, `tmp.py`, `script.py`). The repository must stay 100% pristine.
+> 2. **NO `python3 -c`**: Agents are strictly forbidden from running ad-hoc inline Python commands (`python3 -c "..."`).
+> 3. **NO SCREENSHOT LOOPS**: Never run `agentic-helper screenshot` or inspect images (`/tmp/*.png`). All DOM state, questions, and grading feedback are handled in-memory by the engine.
+> 4. **USE EXISTING TOOLS ONLY**: When invoked, the agent must strictly invoke the existing pre-built engine:
+>    ```bash
+>    agentic-helper multiworker "<course_or_spec_url>" --concurrency 4
+>    ```
+>    (or native MCP tools: `smart_multiworker()`). Everything runs autonomously inside the engine.
+
+---
+
 ## ⚡ Slash Command: `/agentic-helper` (Zero Human Terminal Setup)
 
 When the user types `/agentic-helper [course_url]`, or asks you to *"solve quiz"* / *"complete assessment"*:
@@ -11,11 +25,10 @@ When the user types `/agentic-helper [course_url]`, or asks you to *"solve quiz"
 2. **Auto-Launch & Navigate Browser**: Ensure Chrome/Edge is listening on 9222 and navigated to the target URL using `quiz_pilot.browser_launcher.ensure_browser(url)` (which opens and navigates the link automatically across Windows, Linux, and macOS).
 3. **Login Gate**: If Coursera shows a login screen, ask the user to log in and say "continue". If already logged in, proceed immediately!
 4. **Operate entirely in-memory**: Never write one-off course scripts (e.g., `solve_hw.py`) to disk! Use `CourseraAdapter` or native MCP tools directly.
-5. **Mandatory Parallel Multi-Tab Dispatch (Specialization vs Single Course)**:
-   - **NEVER run sequentially in a single tab!**
-   - **Specialization Course (`/specializations/<slug>`)**: Open **EACH child course in its own browser tab simultaneously** and complete all child courses in parallel concurrently in under 30 minutes!
-   - **Single Course (`/learn/<slug>`)**: Open **different module quizzes in separate browser tabs simultaneously** (Week 1, Week 2, Week 3, Week 4 Quizzes) and solve all modules in parallel concurrently!
-   - **Universal Execution**: Call `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or MCP tool `smart_multiworker()`.
+5. **Mandatory Parallel Multi-Tab Dispatch**:
+   - **Specialization**: Runs course-by-course. In each course, opens up to 4 parallel worker tabs across modules/weeks, reuses tabs in-place as quizzes complete, and automatically advances to the next course when done.
+   - **Single Course**: Opens up to 4 parallel worker tabs across modules/weeks, reuses tabs in-place, and finishes concurrently.
+   - **Universal Execution**: Call `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or CLI `agentic-helper multiworker --concurrency 4`.
 6. **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:
    - If an attempt scores $< 100\%$ or fails, immediately create or update `quiz_analysis.md` via `FastAttemptManager().record_attempt(...)` or MCP `record_quiz_analysis`.
    - Record verified correct option texts (`LOCKED_CORRECT`) and eliminate failed option texts (`ELIMINATED`).

@@ -8,16 +8,16 @@ Enforces zero human terminal setup, multi-tab parallel workers, and self-healing
 
 ## ⚡ Immutable Agent Laws (NEVER VIOLATE)
 
-### 0. ⚡ Mandatory Parallel Multi-Tab Mandate (Specialization vs Single Course)
-- **NEVER solve sequentially one-by-one in a single tab!**
-- **Specialization Course (`/specializations/<slug>`)**: Open **EACH child course in its own browser tab simultaneously** and complete all child courses in parallel concurrently in under 30 minutes!
-- **Single Course (`/learn/<slug>`)**: Open **different module assignments in separate browser tabs simultaneously** (Week 1, Week 2, Week 3, Week 4 Quizzes) and solve all modules in parallel concurrently!
-- **Universal Execution**: Call `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or MCP tool `smart_multiworker()`.
+### 0. ⚡ Mandatory Parallel Multi-Tab Mandate
+- **Specialization**: Runs course-by-course sequentially. In each course, opens up to 4 parallel worker tabs across modules/weeks, reuses tabs in-place as quizzes complete, and automatically advances to the next course when done.
+- **Single Course**: Opens up to 4 parallel worker tabs across modules/weeks, reuses tabs in-place, and completes concurrently.
+- **Universal Execution**: Call `quiz_pilot.tab_scheduler.smart_multiworker_sync(max_concurrency=4)` or CLI `agentic-helper multiworker --concurrency 4`.
 
-### 1. 🚫 Zero Scratch File Law
-- **NEVER** write one-off Python scripts (e.g. `solve_hw1.py`, `quiz.py`, `check.py`, `dump.py`) to disk!
-- The entire engine is pre-built in `quiz_pilot`. Execute all operations **in-memory** directly via Playwright CDP, `CourseraAdapter`, `FastAttemptManager`, or native MCP tools.
-- The repository must remain completely pristine.
+### 1. 🚫 Strict Zero-Scratch & No `python3 -c` Law
+- **NEVER** write one-off Python scripts (e.g. `solve_hw1.py`, `quiz.py`, `check.py`, `dump.py`, `script.py`) to disk!
+- **NEVER** run ad-hoc inline Python commands (`python3 -c "..."`).
+- **NEVER** take screenshot loops (`agentic-helper screenshot` or `Read(*.png)`).
+- The entire engine is pre-built in `quiz_pilot`. Use existing tools only (`agentic-helper multiworker` or MCP tools). The repository must remain completely pristine.
 
 ### 2. 🪟 Windows Browser Launch & URL Navigation
 - Use `ensure_browser(url=course_url, port=9222)` or run `launch_browser_windows.bat "<URL>"`.
