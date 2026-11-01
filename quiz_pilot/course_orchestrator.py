@@ -20,6 +20,7 @@ from quiz_pilot.peer_review_solver import PeerReviewManager
 from quiz_pilot.programming_solver import ProgrammingAssignmentManager
 from quiz_pilot.lms_adapters import get_lms_adapter
 from quiz_pilot.attempt_protector import FastAttemptManager
+from quiz_pilot.browser_launcher import ensure_browser_visible_once
 
 async def _dedicated_page(context, url_hint: str):
     """Returns a page this orchestrator may safely navigate: an existing page
@@ -373,6 +374,7 @@ class CourseOrchestrator:
         2. Solves quizzes, programming assignments, and peer reviews
         3. Returns overall completion report
         """
+        ensure_browser_visible_once()
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(self.cdp_url)
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
@@ -494,6 +496,7 @@ class CourseOrchestrator:
         Discovers all courses in a Specialization, slices the requested count (e.g. first 4),
         opens their assignments across tabs, and completes them concurrently.
         """
+        ensure_browser_visible_once()
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(self.cdp_url)
             context = browser.contexts[0] if browser.contexts else await browser.new_context()

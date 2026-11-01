@@ -21,7 +21,7 @@ from quiz_pilot.lms_adapters import get_lms_adapter
 from quiz_pilot.attempt_protector import FastAttemptManager
 from quiz_pilot.graph_solvers import MulticastSimulator, LamportVectorClockSolver
 from quiz_pilot.diagram_parser import LocalDiagramParser
-from quiz_pilot.browser_launcher import launch_browser, is_browser_running
+from quiz_pilot.browser_launcher import launch_browser, is_browser_running, ensure_browser_visible_once
 from quiz_pilot.tab_scheduler import AsyncTabScheduler
 from quiz_pilot.programming_solver import ProgrammingAssignmentManager
 from quiz_pilot.peer_review_solver import PeerReviewManager
@@ -569,6 +569,20 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         return {"content": [{"type": "text", "text": json.dumps({"success": ok, "message": msg}, indent=2)}]}
 
     cdp_url = arguments.get("cdp_url", "http://127.0.0.1:9222")
+
+    # VISIBILITY (once per server process): if the tool's browser is
+    # already running on the CDP port, raise its window so the user can
+    # SEE the run - the Chrome instance survives between runs, often
+    # minimized or behind the IDE, and every tool used to connect to it
+    # silently (a full run once executed with no visible window).
+    # Never launches anything here: cold starts belong to the
+    # launch_browser tool above.
+    try:
+        _port = int(cdp_url.rsplit(":", 1)[-1].split("/")[0])
+        if is_browser_running(_port):
+            ensure_browser_visible_once(port=_port)
+    except Exception:
+        pass
 
     if name == "solve_multicast":
         mode = arguments["mode"]

@@ -451,6 +451,30 @@ def launch_browser(url: Optional[str] = None, port: int = CDP_DEFAULT_PORT) -> T
     return False, f"Browser launched, but port {port} did not respond within 20 seconds."
 
 
+_visibility_ensured = False
+
+
+def ensure_browser_visible_once(port: int = CDP_DEFAULT_PORT) -> bool:
+    """Make sure the browser is running AND its window is raised - once
+    per process.
+
+    The tool's Chrome survives between runs, often minimized or behind
+    the IDE. Every connect site used to attach silently, so the agent
+    worked in a browser the user could not see (reported 2026-11-01:
+    a full run executed with no visible window). Callers invoke this
+    before their first CDP connection; the once-guard keeps later calls
+    free and never steals focus mid-run.
+    """
+    global _visibility_ensured
+    if _visibility_ensured:
+        return True
+    _visibility_ensured = True
+    try:
+        return ensure_browser(port=port)
+    except Exception:
+        return False
+
+
 def ensure_browser(url: Optional[str] = None, port: int = CDP_DEFAULT_PORT) -> bool:
     """Ensures browser is alive and listening, launching if needed, navigating
     to the target URL, and bringing the window to the front."""

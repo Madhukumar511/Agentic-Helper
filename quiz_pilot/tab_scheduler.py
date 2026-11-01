@@ -15,6 +15,7 @@ from playwright.async_api import async_playwright, Page, Browser
 
 from quiz_pilot.lms_adapters import get_lms_adapter
 from quiz_pilot.attempt_protector import FastAttemptManager
+from quiz_pilot.browser_launcher import ensure_browser_visible_once
 
 logger = logging.getLogger("quiz_pilot.tab_scheduler")
 
@@ -324,6 +325,7 @@ class AsyncTabScheduler:
         Main entry point for concurrent multi-tab quiz execution.
         Discovers all open assessment tabs and processes them concurrently.
         """
+        ensure_browser_visible_once()
         async with async_playwright() as p:
             try:
                 browser = await p.chromium.connect_over_cdp(self.cdp_url)
@@ -379,6 +381,7 @@ class AsyncTabScheduler:
         Opens a list of assessment/course URLs into separate background tabs,
         then processes and solves all of them concurrently.
         """
+        ensure_browser_visible_once()
         async with async_playwright() as p:
             try:
                 browser = await p.chromium.connect_over_cdp(self.cdp_url)
@@ -447,6 +450,7 @@ class AsyncTabScheduler:
            - If tab is an active quiz:
              Solves the assessment directly.
         """
+        ensure_browser_visible_once()
         async with async_playwright() as p:
             try:
                 browser = await p.chromium.connect_over_cdp(self.cdp_url)
