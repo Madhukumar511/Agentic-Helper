@@ -17,12 +17,77 @@ class SyllabusCrawler:
     def set_page(self, page):
         self.page = page
 
+    async def _auto_enroll_if_needed(self) -> bool:
+        """
+        Detects if current page is an unenrolled course landing page,
+        clicks Enroll / Go to course, confirms modal, and returns True if enrollment triggered.
+        """
+        if not self.page:
+            return False
+
+        try:
+            enrolled = await self.page.evaluate('''() => {
+                const btns = Array.from(document.querySelectorAll('button, a'));
+                const isEnrollBtn = (b) => {
+                    const t = (b.innerText || '').trim().toLowerCase();
+                    return (
+                        t.includes("enroll for free") ||
+                        t === "enroll" ||
+                        t.startsWith("enroll") ||
+                        t.includes("go to course") ||
+                        t === "resume course" ||
+                        t.includes("start learning")
+                    ) && b.offsetParent !== null;
+                };
+
+                const enrollBtn = btns.find(isEnrollBtn);
+                if (!enrollBtn) return false;
+
+                enrollBtn.click();
+                return true;
+            }''')
+
+            if not enrolled:
+                return False
+
+            await asyncio.sleep(1.5)
+
+            # Handle any confirmation modal dialog (Audit, Continue, Start, Go to course)
+            await self.page.evaluate('''() => {
+                const modal = document.querySelector('div[role="dialog"], .cds-Modal-container, .rc-EnrollmentModal');
+                if (modal) {
+                    const modalBtns = Array.from(modal.querySelectorAll('button, a'));
+                    const confirmBtn = modalBtns.find(b => {
+                        const t = (b.innerText || '').trim().toLowerCase();
+                        return t.includes("continue") || t.includes("audit") || t.includes("start") || t.includes("go to course");
+                    });
+                    if (confirmBtn) confirmBtn.click();
+                }
+            }''')
+
+            await asyncio.sleep(2.0)
+            return True
+        except Exception:
+            return False
+
     async def crawl_course_assignments(self, course_slug_or_url: str) -> Dict[str, Any]:
         """
         Navigates to the course assignments table and extracts all items with status.
+        Preserves organization/campus URLs (e.g. /organizations/<org>/learn/<slug>).
         """
         if not self.page:
             raise ValueError("No active browser page attached.")
+
+        # Preserve organization prefix (e.g. /organizations/vvce)
+        org_prefix = ""
+        org_match = re.search(r"(/organizations/[^/?#]+)", course_slug_or_url)
+        if org_match:
+            org_prefix = org_match.group(1)
+        elif self.page:
+            cur_p_url = getattr(self.page, "url", "")
+            cur_org_match = re.search(r"(/organizations/[^/?#]+)", cur_p_url)
+            if cur_org_match:
+                org_prefix = cur_org_match.group(1)
 
         # Normalize URL to assignments view
         if "coursera.org" in course_slug_or_url:
@@ -31,7 +96,7 @@ class SyllabusCrawler:
         else:
             course_slug = course_slug_or_url.strip("/ ")
 
-        target_url = f"https://www.coursera.org/learn/{course_slug}/home/assignments"
+        target_url = f"https://www.coursera.org{org_prefix}/learn/{course_slug}/home/assignments"
         current_url = getattr(self.page, "url", "")
 
         # Avoid redundant reloads if page is already on assignments view for this course
@@ -48,7 +113,7 @@ class SyllabusCrawler:
         except Exception:
             await asyncio.sleep(1.5)
 
-        items = await self.page.evaluate('''() => {
+        extract_js = r'''() => {
             const results = [];
             const rows = Array.from(document.querySelectorAll('tr, div[role="row"], div[data-testid*="assignment"], div[data-testid="rc-ItemRow"]'));
             
@@ -124,7 +189,24 @@ class SyllabusCrawler:
                 }
             });
             return results;
-        }''')
+        }'''
+
+        items = await self.page.evaluate(extract_js)
+
+        # Auto-enroll fallback if landing page intercepted assignments view
+        if len(items) == 0:
+            enrolled = await self._auto_enroll_if_needed()
+            if enrolled:
+                if "/home/assignments" not in getattr(self.page, "url", ""):
+                    try:
+                        await self.page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
+                    except Exception:
+                        await self.page.evaluate("(u) => window.location.href = u", target_url)
+                try:
+                    await self.page.wait_for_selector("table, div[role='table'], div[role='row'], [data-testid='grade-item'], tr", timeout=8000)
+                except Exception:
+                    await asyncio.sleep(1.5)
+                items = await self.page.evaluate(extract_js)
 
         # Deduplicate items by title
         deduped = []
@@ -155,11 +237,22 @@ class SyllabusCrawler:
         if not self.page:
             raise ValueError("No active browser page attached.")
 
+        # Preserve organization prefix (e.g. /organizations/vvce)
+        org_prefix = ""
+        org_match = re.search(r"(/organizations/[^/?#]+)", spec_slug_or_url)
+        if org_match:
+            org_prefix = org_match.group(1)
+        elif self.page:
+            cur_p_url = getattr(self.page, "url", "")
+            cur_org_match = re.search(r"(/organizations/[^/?#]+)", cur_p_url)
+            if cur_org_match:
+                org_prefix = cur_org_match.group(1)
+
         if "coursera.org" in spec_slug_or_url:
             target_url = spec_slug_or_url
         else:
             clean_slug = spec_slug_or_url.strip("/ ")
-            target_url = f"https://www.coursera.org/specializations/{clean_slug}"
+            target_url = f"https://www.coursera.org{org_prefix}/specializations/{clean_slug}"
 
         current_url = getattr(self.page, "url", "")
         if target_url not in current_url:
@@ -170,7 +263,7 @@ class SyllabusCrawler:
         except Exception:
             await asyncio.sleep(1.0)
 
-        courses = await self.page.evaluate('''() => {
+        courses = await self.page.evaluate('''([defaultOrg]) => {
             const courseLinks = Array.from(document.querySelectorAll('a[href*="/learn/"]'));
             const results = [];
             const seen = new Set();
@@ -179,7 +272,9 @@ class SyllabusCrawler:
                 const match = a.href.match(/\\/learn\\/([a-zA-Z0-9_-]+)/);
                 if (match) {
                     const slug = match[1];
-                    const cleanHref = "https://www.coursera.org/learn/" + slug;
+                    const orgMatch = a.href.match(/(\\/organizations\\/[^/?#]+)/);
+                    let prefix = orgMatch ? orgMatch[1] : (defaultOrg || "");
+                    const cleanHref = "https://www.coursera.org" + prefix + "/learn/" + slug;
                     if (!seen.has(cleanHref) && !slug.includes("home") && !slug.includes("welcome")) {
                         seen.add(cleanHref);
                         const heading = a.querySelector('h3, h4, strong') || a;
@@ -193,5 +288,5 @@ class SyllabusCrawler:
                 }
             });
             return results;
-        }''')
+        }''', [org_prefix])
         return courses

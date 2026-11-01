@@ -122,214 +122,252 @@ class AsyncTabScheduler:
         auto_submit: bool = True
     ) -> Dict[str, Any]:
         """
-        Isolated worker processing a single tab through the full assessment lifecycle:
-        DETECTION -> EXTRACTION -> ANSWERING -> SUBMISSION -> FEEDBACK.
+        Isolated worker processing a single tab through the full assessment lifecycle
+        with a 90-second timeout ceiling to prevent hanging.
         """
         async with semaphore:
-            title = ""
-            url = ""
             try:
-                title = await page.title()
-                url = page.url
-            except Exception:
-                pass
+                return await asyncio.wait_for(
+                    self._process_single_tab_core(
+                        page=page,
+                        tab_index=tab_index,
+                        expected_url=expected_url,
+                        answer_generator=answer_generator,
+                        auto_submit=auto_submit
+                    ),
+                    timeout=90.0
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"Tab {tab_index} processing timed out after 90 seconds.")
+                cur_url = getattr(page, "url", "") or expected_url or ""
+                return {
+                    "tab_index": tab_index,
+                    "title": "",
+                    "url": cur_url,
+                    "questions_count": 0,
+                    "submitted": False,
+                    "score_pct": None,
+                    "passed": False,
+                    "status": "TIMEOUT",
+                    "error": "Tab processing timed out after 90 seconds"
+                }
 
-            result: Dict[str, Any] = {
-                "tab_index": tab_index,
-                "title": title,
-                "url": url,
-                "questions_count": 0,
-                "submitted": False,
-                "score_pct": None,
-                "passed": False,
-                "error": None
-            }
+    async def _process_single_tab_core(
+        self,
+        page: Page,
+        tab_index: int,
+        expected_url: str = None,
+        answer_generator: Optional[Callable[[List[Dict[str, Any]]], Dict[int, Any]]] = None,
+        auto_submit: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Core implementation of isolated single tab processing lifecycle:
+        DETECTION -> EXTRACTION -> ANSWERING -> SUBMISSION -> FEEDBACK.
+        """
+        title = ""
+        url = ""
+        try:
+            title = await page.title()
+            url = page.url
+        except Exception:
+            pass
 
-            # TAB OWNERSHIP: this worker acts ONLY on its assigned tab/URL.
-            # If the tab no longer shows the assigned work (another worker
-            # navigated it), try ONE re-navigation to our own URL; if that
-            # fails, abort WITHOUT touching whatever foreign assessment is
-            # now displayed - never adopt another worker's tab.
-            assigned_url = (expected_url or url or "").split("?")[0].rstrip("/")
-            current_base = ""
+        result: Dict[str, Any] = {
+            "tab_index": tab_index,
+            "title": title,
+            "url": url,
+            "questions_count": 0,
+            "submitted": False,
+            "score_pct": None,
+            "passed": False,
+            "error": None
+        }
+
+        # TAB OWNERSHIP: this worker acts ONLY on its assigned tab/URL.
+        # If the tab no longer shows the assigned work (another worker
+        # navigated it), try ONE re-navigation to our own URL; if that
+        # fails, abort WITHOUT touching whatever foreign assessment is
+        # now displayed - never adopt another worker's tab.
+        assigned_url = (expected_url or url or "").split("?")[0].rstrip("/")
+        current_base = ""
+        try:
+            current_base = (page.url or "").split("?")[0].rstrip("/")
+        except Exception:
+            pass
+        if assigned_url and current_base and current_base != assigned_url:
             try:
+                await page.goto(expected_url, wait_until="commit")
                 current_base = (page.url or "").split("?")[0].rstrip("/")
             except Exception:
                 pass
-            if assigned_url and current_base and current_base != assigned_url:
+            if current_base != assigned_url:
+                result["status"] = "TAB_OWNERSHIP_LOST"
+                result["error"] = (
+                    f"Tab navigated away from its assigned URL ({assigned_url}); "
+                    "aborted without touching another tab's work."
+                )
+                return result
+
+        # Per-tab quiz identity: title ALONE collides across workers
+        # (two courses can hold same-titled quizzes and would share
+        # one memory file). Scope memory to this tab's course slug.
+        _slug = assigned_url.rstrip("/").split("/")[-1] if assigned_url else ""
+        quiz_key = f"{title} [{_slug}]" if title else (_slug or f"tab_{tab_index}")
+        result["quiz_key"] = quiz_key
+
+        try:
+            adapter = get_lms_adapter(page)
+            
+            # 1. Extract Questions via LMS Adapter
+            questions = await adapter.extract_questions_async()
+            
+            result["questions_count"] = len(questions)
+            if not questions:
+                result["status"] = "NO_QUESTIONS_FOUND"
+                return result
+
+            # 2. Determine Answers
+            answers: Dict[int, Any] = {}
+            if answer_generator:
+                answers = answer_generator(questions)
+            else:
+                answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=quiz_key)
+
+            # NO GUESSING: questions without a known answer stay
+            # UNANSWERED and are reported (previously default-filled
+            # with option 0 - a silent coin flip on a real attempt).
+            _known = {
+                q.get("index", 0) for q in questions
+                if q.get("index", 0) in answers or str(q.get("index", 0)) in answers
+            }
+            unknown_indices = [q.get("index", 0) for q in questions if q.get("index", 0) not in _known]
+            coverage = (len(_known) / len(questions)) if questions else 0.0
+            result["coverage_pct"] = round(coverage * 100, 1)
+            result["unknown_questions"] = unknown_indices
+            result["unknown_questions_detail"] = _unknown_details(questions, unknown_indices)
+
+            # 3. Fill Answers via LMS Adapter (fill only)
+            if hasattr(adapter, "batch_fill_answers_async"):
+                await adapter.batch_fill_answers_async(answers, auto_submit=False)
+            elif hasattr(adapter, "batch_fill_answers"):
+                adapter.batch_fill_answers(answers, auto_submit=False)
+            else:
+                for q_idx, val in answers.items():
+                    await adapter.fill_answer_async(int(q_idx), val)
+
+            # 4. Handle Submission & Feedback - 80% FLOOR + SINGLE ATTEMPT:
+            # the floor only stops a wasted submission; it is NOT a score
+            # target. The target is the maximum grade: every question the
+            # agent can genuinely answer must be answered before this.
+            # Submit only when known answers cover >= 80% of questions.
+            # Below the gate the known answers stay filled, NOTHING is
+            # submitted (zero attempts burned), and the run reports the
+            # uncertain questions instead of gambling an attempt on them.
+            if auto_submit and coverage < 0.80:
+                result["status"] = "NEEDS_REVIEW_NOT_SUBMITTED"
+                result["submitted"] = False
+            elif auto_submit:
+                await adapter.submit_assessment_async()
+                result["submitted"] = True
+                result["attempts_used"] = 1
+                await asyncio.sleep(0.5)
+
                 try:
-                    await page.goto(expected_url, wait_until="commit")
-                    current_base = (page.url or "").split("?")[0].rstrip("/")
+                    fb = await adapter.extract_feedback_async()
+                except Exception:
+                    fb = {}
+
+                result["score_pct"] = fb.get("score_pct")
+                result["passed"] = fb.get("passed", False)
+                result["status"] = "PASSED" if result["passed"] else "COMPLETED"
+
+                # 5. Record feedback and update memory
+                try:
+                    fb_map = fb.get("feedback")
+                    if fb_map is None:
+                        fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
+                    self.attempt_mgr.record_attempt(
+                        quiz_id=quiz_key,
+                        attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
+                        questions=questions,
+                        answers=answers,
+                        feedback=fb_map,
+                        score_pct=fb.get("score_pct")
+                    )
                 except Exception:
                     pass
-                if current_base != assigned_url:
-                    result["status"] = "TAB_OWNERSHIP_LOST"
-                    result["error"] = (
-                        f"Tab navigated away from its assigned URL ({assigned_url}); "
-                        "aborted without touching another tab's work."
-                    )
-                    return result
-
-            # Per-tab quiz identity: title ALONE collides across workers
-            # (two courses can hold same-titled quizzes and would share
-            # one memory file). Scope memory to this tab's course slug.
-            _slug = assigned_url.rstrip("/").split("/")[-1] if assigned_url else ""
-            quiz_key = f"{title} [{_slug}]" if title else (_slug or f"tab_{tab_index}")
-            result["quiz_key"] = quiz_key
-
-            try:
-                adapter = get_lms_adapter(page)
-                
-                # 1. Extract Questions via LMS Adapter
-                questions = await adapter.extract_questions_async()
-                
-                result["questions_count"] = len(questions)
-                if not questions:
-                    result["status"] = "NO_QUESTIONS_FOUND"
-                    return result
-
-                # 2. Determine Answers
-                answers: Dict[int, Any] = {}
-                if answer_generator:
-                    answers = answer_generator(questions)
-                else:
-                    answers = self.attempt_mgr.get_retry_answers(questions, quiz_id=quiz_key)
-
-                # NO GUESSING: questions without a known answer stay
-                # UNANSWERED and are reported (previously default-filled
-                # with option 0 - a silent coin flip on a real attempt).
-                _known = {
-                    q.get("index", 0) for q in questions
-                    if q.get("index", 0) in answers or str(q.get("index", 0)) in answers
-                }
-                unknown_indices = [q.get("index", 0) for q in questions if q.get("index", 0) not in _known]
-                coverage = (len(_known) / len(questions)) if questions else 0.0
-                result["coverage_pct"] = round(coverage * 100, 1)
-                result["unknown_questions"] = unknown_indices
-                result["unknown_questions_detail"] = _unknown_details(questions, unknown_indices)
-
-                # 3. Fill Answers via LMS Adapter (fill only)
-                if hasattr(adapter, "batch_fill_answers_async"):
-                    await adapter.batch_fill_answers_async(answers, auto_submit=False)
-                elif hasattr(adapter, "batch_fill_answers"):
-                    adapter.batch_fill_answers(answers, auto_submit=False)
-                else:
-                    for q_idx, val in answers.items():
-                        await adapter.fill_answer_async(int(q_idx), val)
-
-                # 4. Handle Submission & Feedback - 80% FLOOR + SINGLE ATTEMPT:
-                # the floor only stops a wasted submission; it is NOT a score
-                # target. The target is the maximum grade: every question the
-                # agent can genuinely answer must be answered before this.
-                # Submit only when known answers cover >= 80% of questions.
-                # Below the gate the known answers stay filled, NOTHING is
-                # submitted (zero attempts burned), and the run reports the
-                # uncertain questions instead of gambling an attempt on them.
-                if auto_submit and coverage < 0.80:
-                    result["status"] = "NEEDS_REVIEW_NOT_SUBMITTED"
-                    result["submitted"] = False
-                elif auto_submit:
-                    await adapter.submit_assessment_async()
-                    result["submitted"] = True
-                    result["attempts_used"] = 1
-                    await asyncio.sleep(0.5)
-
+                # FAIL-RETRY UNTIL PASS (user policy): a PASS is final
+                # and is never retaken to improve the score, but a FAILED
+                # quiz means NO certificate - so after a fail the agent
+                # keeps re-attempting, each time using the latest feedback
+                # (correct answers locked, wrong options eliminated,
+                # failed questions re-solved), UNTIL THE QUIZ PASSES.
+                # Rounds stop early only when there is nothing new to
+                # submit (no questions extractable, or known answers
+                # under the 80% floor) or after 9 retries (loop guard).
+                _retry_rounds = 0
+                while result.get("passed") is False and _retry_rounds < 9:
+                    _retry_rounds += 1
                     try:
-                        fb = await adapter.extract_feedback_async()
+                        retry_questions = await adapter.extract_questions_async()
                     except Exception:
-                        fb = {}
-
-                    result["score_pct"] = fb.get("score_pct")
-                    result["passed"] = fb.get("passed", False)
-                    result["status"] = "PASSED" if result["passed"] else "COMPLETED"
-
-                    # 5. Record feedback and update memory
+                        retry_questions = []
+                    if not retry_questions:
+                        break
+                    r_answers = self.attempt_mgr.get_retry_answers(retry_questions, quiz_id=quiz_key)
+                    if answer_generator:
+                        try:
+                            _gen2 = answer_generator(retry_questions)
+                            if _gen2:
+                                r_answers.update(_gen2)
+                        except Exception:
+                            pass
+                    _r_known = {
+                        q.get("index", 0) for q in retry_questions
+                        if q.get("index", 0) in r_answers or str(q.get("index", 0)) in r_answers
+                    }
+                    if (len(_r_known) / len(retry_questions)) < 0.80:
+                        break
+                    if hasattr(adapter, "batch_fill_answers_async"):
+                        await adapter.batch_fill_answers_async(r_answers, auto_submit=False)
+                    elif hasattr(adapter, "batch_fill_answers"):
+                        adapter.batch_fill_answers(r_answers, auto_submit=False)
+                    else:
+                        for _qi, _qv in r_answers.items():
+                            await adapter.fill_answer_async(int(_qi), _qv)
+                    await adapter.submit_assessment_async()
+                    result["attempts_used"] = result.get("attempts_used", 1) + 1
+                    await asyncio.sleep(0.5)
                     try:
-                        fb_map = fb.get("feedback")
-                        if fb_map is None:
-                            fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
+                        fb2 = await adapter.extract_feedback_async()
+                    except Exception:
+                        fb2 = {}
+                    result["score_pct"] = fb2.get("score_pct")
+                    result["passed"] = fb2.get("passed", False)
+                    result["status"] = "PASSED" if result["passed"] else "COMPLETED"
+                    try:
+                        fb_map2 = fb2.get("feedback")
+                        if fb_map2 is None:
+                            fb_map2 = {q["index"]: fb2.get("passed", False) for q in retry_questions} if fb2.get("passed") else {}
                         self.attempt_mgr.record_attempt(
                             quiz_id=quiz_key,
                             attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
-                            questions=questions,
-                            answers=answers,
-                            feedback=fb_map,
-                            score_pct=fb.get("score_pct")
+                            questions=retry_questions,
+                            answers=r_answers,
+                            feedback=fb_map2,
+                            score_pct=fb2.get("score_pct")
                         )
                     except Exception:
                         pass
-                    # FAIL-RETRY UNTIL PASS (user policy): a PASS is final
-                    # and is never retaken to improve the score, but a FAILED
-                    # quiz means NO certificate - so after a fail the agent
-                    # keeps re-attempting, each time using the latest feedback
-                    # (correct answers locked, wrong options eliminated,
-                    # failed questions re-solved), UNTIL THE QUIZ PASSES.
-                    # Rounds stop early only when there is nothing new to
-                    # submit (no questions extractable, or known answers
-                    # under the 80% floor) or after 9 retries (loop guard).
-                    _retry_rounds = 0
-                    while result.get("passed") is False and _retry_rounds < 9:
-                        _retry_rounds += 1
-                        try:
-                            retry_questions = await adapter.extract_questions_async()
-                        except Exception:
-                            retry_questions = []
-                        if not retry_questions:
-                            break
-                        r_answers = self.attempt_mgr.get_retry_answers(retry_questions, quiz_id=quiz_key)
-                        if answer_generator:
-                            try:
-                                _gen2 = answer_generator(retry_questions)
-                                if _gen2:
-                                    r_answers.update(_gen2)
-                            except Exception:
-                                pass
-                        _r_known = {
-                            q.get("index", 0) for q in retry_questions
-                            if q.get("index", 0) in r_answers or str(q.get("index", 0)) in r_answers
-                        }
-                        if (len(_r_known) / len(retry_questions)) < 0.80:
-                            break
-                        if hasattr(adapter, "batch_fill_answers_async"):
-                            await adapter.batch_fill_answers_async(r_answers, auto_submit=False)
-                        elif hasattr(adapter, "batch_fill_answers"):
-                            adapter.batch_fill_answers(r_answers, auto_submit=False)
-                        else:
-                            for _qi, _qv in r_answers.items():
-                                await adapter.fill_answer_async(int(_qi), _qv)
-                        await adapter.submit_assessment_async()
-                        result["attempts_used"] = result.get("attempts_used", 1) + 1
-                        await asyncio.sleep(0.5)
-                        try:
-                            fb2 = await adapter.extract_feedback_async()
-                        except Exception:
-                            fb2 = {}
-                        result["score_pct"] = fb2.get("score_pct")
-                        result["passed"] = fb2.get("passed", False)
-                        result["status"] = "PASSED" if result["passed"] else "COMPLETED"
-                        try:
-                            fb_map2 = fb2.get("feedback")
-                            if fb_map2 is None:
-                                fb_map2 = {q["index"]: fb2.get("passed", False) for q in retry_questions} if fb2.get("passed") else {}
-                            self.attempt_mgr.record_attempt(
-                                quiz_id=quiz_key,
-                                attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
-                                questions=retry_questions,
-                                answers=r_answers,
-                                feedback=fb_map2,
-                                score_pct=fb2.get("score_pct")
-                            )
-                        except Exception:
-                            pass
-                else:
-                    result["status"] = "ANSWERS_FILLED"
+            else:
+                result["status"] = "ANSWERS_FILLED"
 
-            except Exception as e:
-                logger.error(f"Error processing tab {tab_index} ({url}): {e}")
-                result["error"] = str(e)
-                result["status"] = "ERROR"
+        except Exception as e:
+            logger.error(f"Error processing tab {tab_index} ({url}): {e}")
+            result["error"] = str(e)
+            result["status"] = "ERROR"
 
-            return result
+        return result
 
     async def run_parallel_batch(
         self,
@@ -356,18 +394,34 @@ class AsyncTabScheduler:
                 }
 
             semaphore = asyncio.Semaphore(self.max_concurrency)
-            tasks = [
-                self._process_single_tab(
-                    page=tab,
-                    tab_index=idx,
-                    semaphore=semaphore,
-                    answer_generator=answer_generator,
-                    auto_submit=auto_submit,
-                    expected_url=tab.url
-                )
-                for idx, tab in enumerate(tabs)
-            ]
 
+            async def _run_worker_tab(tab, idx):
+                try:
+                    return await asyncio.wait_for(
+                        self._process_single_tab(
+                            page=tab,
+                            tab_index=idx,
+                            semaphore=semaphore,
+                            answer_generator=answer_generator,
+                            auto_submit=auto_submit,
+                            expected_url=tab.url
+                        ),
+                        timeout=90.0
+                    )
+                except asyncio.TimeoutError:
+                    return {
+                        "tab_index": idx,
+                        "title": "",
+                        "url": getattr(tab, "url", ""),
+                        "questions_count": 0,
+                        "submitted": False,
+                        "score_pct": None,
+                        "passed": False,
+                        "status": "TIMEOUT",
+                        "error": "Tab processing timed out after 90 seconds"
+                    }
+
+            tasks = [_run_worker_tab(tab, idx) for idx, tab in enumerate(tabs)]
             results = await asyncio.gather(*tasks, return_exceptions=False)
             
             passed_count = sum(1 for r in results if r.get("passed"))

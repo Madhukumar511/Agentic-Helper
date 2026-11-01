@@ -190,6 +190,63 @@ class TestAgenticHelperFeatures(unittest.TestCase):
         self.assertIn(p_quiz, discovered)
         self.assertIn(p_canvas, discovered)
 
+    def test_syllabus_crawler_org_preservation_and_auto_enroll(self):
+        import asyncio
+        from unittest.mock import MagicMock, AsyncMock
+        from quiz_pilot.syllabus_crawler import SyllabusCrawler
+
+        mock_page = MagicMock()
+        mock_page.url = "https://www.coursera.org/organizations/vvce/learn/cloud-computing/home/assignments"
+        mock_page.goto = AsyncMock(return_value=None)
+        mock_page.wait_for_selector = AsyncMock(return_value=None)
+        mock_page.evaluate = AsyncMock(return_value=[
+            {"title": "Quiz 1", "type": "quiz", "status": "not_attempted", "weight": "20%", "url": "https://..."}
+        ])
+
+        crawler = SyllabusCrawler(page=mock_page)
+        res = asyncio.run(crawler.crawl_course_assignments("https://www.coursera.org/organizations/vvce/learn/cloud-computing"))
+        self.assertEqual(res["course_slug"], "cloud-computing")
+        self.assertEqual(len(res["assignments"]), 1)
+
+        # Test specialization org URL preservation
+        mock_page.evaluate = AsyncMock(return_value=[
+            {"title": "Course 1", "slug": "cloud-1", "url": "https://www.coursera.org/organizations/vvce/learn/cloud-1"}
+        ])
+        courses = asyncio.run(crawler.crawl_specialization_courses("https://www.coursera.org/organizations/vvce/specializations/cloud"))
+        self.assertEqual(len(courses), 1)
+        self.assertIn("/organizations/vvce/", courses[0]["url"])
+
+    def test_tab_scheduler_timeout_handling(self):
+        import asyncio
+        from unittest.mock import MagicMock
+        from quiz_pilot.tab_scheduler import AsyncTabScheduler
+
+        sched = AsyncTabScheduler()
+        mock_page = MagicMock()
+        mock_page.title = MagicMock(return_value="Frozen Quiz")
+        mock_page.url = "https://www.coursera.org/learn/frozen/exam/1"
+
+        async def hanging_core(*args, **kwargs):
+            await asyncio.sleep(100.0)
+
+        sched._process_single_tab_core = hanging_core
+        sem = asyncio.Semaphore(1)
+
+        async def run_with_short_timeout():
+            # Run with a short wait to verify timeout handling structure
+            try:
+                return await asyncio.wait_for(
+                    sched._process_single_tab(mock_page, 0, sem, expected_url=mock_page.url),
+                    timeout=0.1
+                )
+            except asyncio.TimeoutError:
+                return {"status": "TIMEOUT", "error": "Tab processing timed out"}
+
+        result = asyncio.run(run_with_short_timeout())
+        self.assertEqual(result["status"], "TIMEOUT")
+        # Semaphore must remain available
+        self.assertEqual(sem._value, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

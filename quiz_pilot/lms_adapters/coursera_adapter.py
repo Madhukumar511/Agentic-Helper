@@ -332,7 +332,7 @@ class CourseraAdapter(BaseLMSAdapter):
         return fill_res
 
     def submit_assessment(self) -> bool:
-        """Atomic submission: checks honor code, clicks submit, and confirms dialog."""
+        """Atomic submission: checks honor code, signs electronic signature, clicks submit, and confirms dialog."""
         clicked = self.page.evaluate('''() => {
             // Dismiss any leftover warning modal
             let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
@@ -355,11 +355,20 @@ class CourseraAdapter(BaseLMSAdapter):
                 }
             }
 
-            // 2. Click Submit button
+            // 2. Electronic signature auto-fill if required
+            let sigInput = document.querySelector('input[name*="signature" i], #signature-input, input[placeholder*="Full Name" i], input[aria-label*="signature" i]');
+            if (sigInput && !sigInput.value) {
+                sigInput.value = "Student";
+                sigInput.dispatchEvent(new Event('input', { bubbles: true }));
+                sigInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            // 3. Click Submit button (broadened to submit quiz, submit assignment)
             let submitBtn = document.querySelector('[data-testid="submit-button"], button.submit-button') ||
-                            Array.from(document.querySelectorAll('button')).find(b => 
-                                b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
-                            );
+                            Array.from(document.querySelectorAll('button')).find(b => {
+                                let t = b.innerText.trim().toLowerCase();
+                                return (t === 'submit' || t === 'submit quiz' || t === 'submit assignment') && !b.disabled;
+                            });
             let didClick = false;
             if (submitBtn) {
                 submitBtn.click();
@@ -381,7 +390,7 @@ class CourseraAdapter(BaseLMSAdapter):
             if (dialog) {
                 let confirmBtn = Array.from(dialog.querySelectorAll('button')).find(b => {
                     let t = b.innerText.trim().toLowerCase();
-                    return t === 'submit' || t === 'continue' || t === 'yes';
+                    return t === 'submit' || t === 'submit quiz' || t === 'submit assignment' || t === 'continue' || t === 'yes';
                 });
                 if (confirmBtn) confirmBtn.click();
             }
@@ -389,7 +398,7 @@ class CourseraAdapter(BaseLMSAdapter):
         return bool(clicked)
 
     async def submit_assessment_async(self) -> bool:
-        """Atomic async submission: checks honor code, clicks submit, and confirms dialog without blocking event loop."""
+        """Atomic async submission: checks honor code, signs electronic signature, clicks submit, and confirms dialog without blocking event loop."""
         clicked_res = self.page.evaluate('''() => {
             // Dismiss any leftover warning modal
             let cancelBtn = Array.from(document.querySelectorAll('div[role="dialog"] button')).find(b => b.innerText.includes("Cancel"));
@@ -412,11 +421,20 @@ class CourseraAdapter(BaseLMSAdapter):
                 }
             }
 
-            // 2. Click Submit button
+            // 2. Electronic signature auto-fill if required
+            let sigInput = document.querySelector('input[name*="signature" i], #signature-input, input[placeholder*="Full Name" i], input[aria-label*="signature" i]');
+            if (sigInput && !sigInput.value) {
+                sigInput.value = "Student";
+                sigInput.dispatchEvent(new Event('input', { bubbles: true }));
+                sigInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            // 3. Click Submit button (broadened to submit quiz, submit assignment)
             let submitBtn = document.querySelector('[data-testid="submit-button"], button.submit-button') ||
-                            Array.from(document.querySelectorAll('button')).find(b => 
-                                b.innerText.trim().toLowerCase() === 'submit' && !b.disabled
-                            );
+                            Array.from(document.querySelectorAll('button')).find(b => {
+                                let t = b.innerText.trim().toLowerCase();
+                                return (t === 'submit' || t === 'submit quiz' || t === 'submit assignment') && !b.disabled;
+                            });
             let didClick = false;
             if (submitBtn) {
                 submitBtn.click();
@@ -442,7 +460,7 @@ class CourseraAdapter(BaseLMSAdapter):
             if (dialog) {
                 let confirmBtn = Array.from(dialog.querySelectorAll('button')).find(b => {
                     let t = b.innerText.trim().toLowerCase();
-                    return t === 'submit' || t === 'continue' || t === 'yes';
+                    return t === 'submit' || t === 'submit quiz' || t === 'submit assignment' || t === 'continue' || t === 'yes';
                 });
                 if (confirmBtn) confirmBtn.click();
             }
@@ -492,3 +510,28 @@ class CourseraAdapter(BaseLMSAdapter):
                 "feedback": feedback
             };
         }''')
+
+    async def extract_feedback_async(self, timeout_sec: float = 8.0) -> Dict[str, Any]:
+        """
+        Polls DOM reactively for grading completion up to timeout_sec.
+        Avoids false 0% scores while Coursera displays 'Grading in progress...'.
+        """
+        deadline = time.time() + timeout_sec
+        latest_res = {"score_pct": 0.0, "passed": False, "feedback": {}}
+        while True:
+            res = self.extract_feedback()
+            if asyncio.iscoroutine(res):
+                res = await res
+            latest_res = res or latest_res
+
+            score = latest_res.get("score_pct")
+            passed = latest_res.get("passed", False)
+            fb = latest_res.get("feedback", {})
+
+            # Resolved if score parsed > 0, pass banner found, or question checkmarks populated
+            is_ready = (score is not None and score > 0.0) or passed or bool(fb)
+            if is_ready or time.time() >= deadline:
+                break
+            await asyncio.sleep(0.5)
+
+        return latest_res
