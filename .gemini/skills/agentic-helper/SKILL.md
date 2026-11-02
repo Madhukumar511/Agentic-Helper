@@ -67,37 +67,37 @@ Connect to the browser over CDP:
 
 ---
 
-### Phase 3: The Parallel Multi-Tab Execution Engine (Specialization vs Single Course)
-Once logged in, **NEVER solve sequentially one-by-one in a single tab!**
-Agents **MUST** immediately inspect the course type and parallelize across browser tabs:
+### Phase 3: Brain-Guided Multi-Tab Execution Protocol
 
-#### 🌟 Case A: If it is a Specialization (`/specializations/<spec-slug>` or multi-course track)
-- Discover all child courses in the specialization via `SyllabusCrawler`.
-- **Open EACH child course in its own browser tab simultaneously** (up to 4 parallel tabs).
-- Execute all child courses **in parallel concurrently** until the entire specialization is completed!
-- Finish specializations in under 30 minutes!
+The AI Agent acts as the intelligent director, using tools to inspect and execute:
 
-#### 📚 Case B: If it is a Single Course (`/learn/<course-slug>`)
-- Crawl the syllabus to extract all incomplete modules and assignments (Week 1, Week 2, Week 3, Week 4...).
-- **Open EACH module assignment in its own browser tab simultaneously** (up to `max_concurrency: 4`).
-- Execute all module quizzes **in parallel concurrently** so all weeks finish at once!
-
-#### 🌐 Case C: If Multiple Assessment Tabs are Already Open
-- Immediately process and solve all open tabs in parallel!
-
-#### 🚀 1-Line Universal Execution (Auto-Detects Specialization vs Single Course):
-In Python / Direct script:
-```python
-from quiz_pilot.tab_scheduler import smart_multiworker_sync
-
-# Automatically inspects active page:
-# - If Specialization -> opens child courses in parallel tabs & completes concurrently
-# - If Single Course -> opens module quizzes in parallel tabs & completes concurrently
-# - If multiple tabs already open -> completes all open tabs concurrently
-results = smart_multiworker_sync(max_concurrency=4, auto_submit=True)
-print(f"Passed {results.get('passed_count', 0)} tasks concurrently across tabs!")
+#### Step 1: Syllabus Inspection & Plan Generation
+The AI Agent crawls the course assignments to get the clean execution plan:
+```bash
+agentic-helper crawl-syllabus "<course_url>" --json
 ```
-*(Or via MCP: `smart_multiworker(concurrency=4, auto_submit=True)`, or CLI: `agentic-helper multiworker --concurrency 4`)*
+
+#### Step 2: AI Brain Review & URL Filtering
+The AI Agent reads the output:
+- Filters out any non-assessment tasks.
+- Identifies the real pending/failed assignments for the active course.
+- Groups them into batches of up to 4 URLs (e.g. Week 1 Quiz, Week 2 Quiz, Week 3 Quiz, Week 4 Quiz).
+
+#### Step 3: Targeted Multiworker Execution
+The AI Agent passes the EXACT, verified URLs to the parallel solver:
+```bash
+agentic-helper multiworker "<quiz_url_1>" "<quiz_url_2>" "<quiz_url_3>" "<quiz_url_4>" --concurrency 4
+```
+*Note: Because exact URLs are provided, the engine will NOT crawl or guess random links. It will open only these 4 tabs, solve them in parallel, and return results.*
+
+#### Step 4: Verification & Progression
+- The AI Agent checks the score of each tab from the output.
+- If an item is a peer assignment, run:
+  ```bash
+  agentic-helper submit-peer
+  agentic-helper complete-reviews
+  ```
+- If all modules in the course are passed, proceed to the next course in the specialization.
 
 ---
 

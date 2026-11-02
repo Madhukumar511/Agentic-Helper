@@ -233,7 +233,7 @@ class ProgrammingAssignmentManager:
             await file_input.first.set_input_files(abs_path)
             await asyncio.sleep(1.0)
 
-            # 3. Check Honor Code agreement checkbox (#agreement-checkbox-base)
+            # 3. Check Honor Code agreement checkbox (#agreement-checkbox-base) and fill signature
             await p.evaluate('''() => {
                 let cb = document.querySelector('#agreement-checkbox-base, input[name*="agreement" i]') ||
                          Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).find(c => {
@@ -242,6 +242,13 @@ class ProgrammingAssignmentManager:
                          });
                 if (cb && !cb.checked && cb.getAttribute('aria-checked') !== 'true') {
                     cb.click();
+                }
+
+                let sig = document.querySelector('input[name*="signature" i], #signature-input, input[placeholder*="Full Name" i], input[aria-label*="signature" i]');
+                if (sig && !sig.value) {
+                    sig.value = "Student";
+                    sig.dispatchEvent(new Event('input', { bubbles: true }));
+                    sig.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             }''')
             await asyncio.sleep(0.5)

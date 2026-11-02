@@ -43,9 +43,15 @@ class AISolver:
             "explanation": "..."
         }
         """
-        q_text = question.get("text", "")
+        q_text = question.get("prompt") or question.get("text", "")
         options = question.get("options", [])
-        q_type = question.get("type", "single_choice")
+        raw_type = str(question.get("type", "single_choice")).lower()
+        if raw_type in ("radio", "single_choice"):
+            q_type = "single_choice"
+        elif raw_type in ("checkbox", "multiple_choice"):
+            q_type = "multiple_choice"
+        else:
+            q_type = raw_type
 
         if not options:
             return {"selected_indices": [], "confidence": 0.0, "explanation": "No options provided."}
@@ -160,3 +166,18 @@ Return ONLY valid JSON matching this schema:
                     return {"selected_indices": nums, "confidence": 0.8, "explanation": "Extracted via regex."}
 
             return {"selected_indices": [], "confidence": 0.0, "explanation": "Abstained: could not parse the model reply; left unanswered instead of guessing."}
+
+    def generate_answers(self, questions: List[Dict[str, Any]]) -> Dict[int, Any]:
+        """Batch answer generator compatible with tab_scheduler and course_orchestrator."""
+        answers = {}
+        for q in questions:
+            idx = q.get("index", 0)
+            res = self.solve_question(q)
+            selected = res.get("selected_indices", [])
+            q_type = str(q.get("type", "")).lower()
+            if selected:
+                if q_type in ("checkbox", "multiple_choice"):
+                    answers[idx] = selected
+                else:
+                    answers[idx] = selected[0]
+        return answers

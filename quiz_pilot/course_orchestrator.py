@@ -331,12 +331,18 @@ class CourseOrchestrator:
                     fb = await adapter.extract_feedback_async()
                     score_pct = fb.get("score_pct")
                     is_passed = fb.get("passed", score_pct >= 80.0 if score_pct is not None else False)
+                    fb_map = fb.get("feedback", {})
+                    if not fb_map:
+                        if is_passed:
+                            fb_map = {q.get("index", idx): True for idx, q in enumerate(questions)}
+                        elif score_pct == 0.0:
+                            fb_map = {q.get("index", idx): False for idx, q in enumerate(questions)}
                     self.attempt_mgr.record_attempt(
                         quiz_id=item_title,
                         attempt_num=self.attempt_mgr.next_attempt_num(item_title),
                         questions=questions,
                         answers=answers,
-                        feedback=fb.get("feedback", {}),
+                        feedback=fb_map,
                         score_pct=score_pct,
                         passed=is_passed,
                         md_path="quiz_analysis.md"

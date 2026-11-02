@@ -690,6 +690,8 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
                 report_pdf_path=arguments["report_pdf_path"],
                 video_url=arguments.get("video_url", "")
             )
+            if asyncio.iscoroutine(res):
+                res = await res
             return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
 
     if name == "complete_peer_reviews":
@@ -701,6 +703,8 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             prm = PeerReviewManager(page)
             cnt = int(arguments.get("count", 4))
             res = prm.complete_peer_reviews(count=cnt)
+            if asyncio.iscoroutine(res):
+                res = await res
             return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
 
     if name == "auto_solve_current_assignment":
@@ -718,6 +722,8 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
                 t_info = prm.detect_peer_task(url, text)
                 if t_info.get("mode") == "review":
                     res = prm.complete_peer_reviews(count=t_info.get("reviews_left") or 4)
+                    if asyncio.iscoroutine(res):
+                        res = await res
                     return {"content": [{"type": "text", "text": json.dumps({"type": "peer_review", "result": res}, indent=2)}]}
                 else:
                     return {"content": [{"type": "text", "text": json.dumps({"type": "peer_submission_ready", "info": t_info}, indent=2)}]}
@@ -735,9 +741,10 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
     if name == "crawl_syllabus":
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(cdp_url)
-            page = await find_assessment_page(browser)
+            page = await find_assessment_page(browser, arguments.get("tab_keyword"))
             if not page:
-                return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
+                ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+                page = await ctx.new_page()
             crawler = SyllabusCrawler(page=page)
             res = await crawler.crawl_course_assignments(arguments["course_url"])
             return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}

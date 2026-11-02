@@ -196,7 +196,11 @@ class PeerReviewManager:
             raise ValueError("No active browser page attached.")
 
         if asyncio.iscoroutinefunction(getattr(self.page, "evaluate", None)):
-            return self.submit_peer_assignment_async(title, report_pdf_path, video_url)
+            try:
+                asyncio.get_running_loop()
+                return self.submit_peer_assignment_async(title, report_pdf_path, video_url)
+            except RuntimeError:
+                return asyncio.run(self.submit_peer_assignment_async(title, report_pdf_path, video_url))
 
         if not report_pdf_path:
             report_pdf_path = self._generate_default_report(title)
@@ -467,7 +471,11 @@ class PeerReviewManager:
             raise ValueError("No active browser page attached.")
 
         if asyncio.iscoroutinefunction(getattr(self.page, "evaluate", None)):
-            return self.complete_peer_reviews_async(count, custom_feedbacks)
+            try:
+                asyncio.get_running_loop()
+                return self.complete_peer_reviews_async(count, custom_feedbacks)
+            except RuntimeError:
+                return asyncio.run(self.complete_peer_reviews_async(count, custom_feedbacks))
 
         feedbacks = custom_feedbacks or DEFAULT_PEER_FEEDBACKS
         completed = 0
@@ -487,12 +495,22 @@ class PeerReviewManager:
             # Evaluate and select the highest rubric option in every radio group
             clicked_count = self.page.evaluate(RUBRIC_SELECTION_JS)
 
-            # Fill feedback
-            ta = self.page.locator("textarea[placeholder*=\"Share your thoughts\"], textarea[id*=\"comment\"]")
-            if ta.count() > 0:
-                fb_text = feedbacks[completed % len(feedbacks)]
-                ta.first.fill(fb_text)
-                time.sleep(1)
+            # Fill feedback across all visible textareas
+            ta = self.page.locator("textarea[placeholder*=\"Share your thoughts\"], textarea[id*=\"comment\"], textarea:visible")
+            ta_count = ta.count()
+            for t_idx in range(ta_count):
+                cur_ta = ta.nth(t_idx)
+                try:
+                    val = cur_ta.input_value()
+                except Exception:
+                    val = ""
+                if not val.strip():
+                    fb_text = feedbacks[(completed + t_idx) % len(feedbacks)]
+                    try:
+                        cur_ta.fill(fb_text)
+                    except Exception:
+                        pass
+            time.sleep(1)
 
             # Click Submit Review
             submit_btn = self.page.locator("button:has-text(\"Submit Review\"):visible")
@@ -545,12 +563,21 @@ class PeerReviewManager:
 
             clicked_count = await self.page.evaluate(RUBRIC_SELECTION_JS)
 
-            ta = self.page.locator("textarea[placeholder*=\"Share your thoughts\"], textarea[id*=\"comment\"]")
+            ta = self.page.locator("textarea[placeholder*=\"Share your thoughts\"], textarea[id*=\"comment\"], textarea:visible")
             ta_count = await ta.count() if hasattr(ta, "count") else 0
-            if ta_count > 0:
-                fb_text = feedbacks[completed % len(feedbacks)]
-                await ta.first.fill(fb_text)
-                await asyncio.sleep(1)
+            for t_idx in range(ta_count):
+                cur_ta = ta.nth(t_idx)
+                try:
+                    val = await cur_ta.input_value()
+                except Exception:
+                    val = ""
+                if not val.strip():
+                    fb_text = feedbacks[(completed + t_idx) % len(feedbacks)]
+                    try:
+                        await cur_ta.fill(fb_text)
+                    except Exception:
+                        pass
+            await asyncio.sleep(1)
 
             submit_btn = self.page.locator("button:has-text(\"Submit Review\"):visible")
             sub_count = await submit_btn.count() if hasattr(submit_btn, "count") else 0

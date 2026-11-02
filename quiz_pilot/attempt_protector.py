@@ -235,16 +235,32 @@ class FastAttemptManager:
         if not target_text or not options:
             return None
         norm_target = self._normalize_text(target_text)
+        if not norm_target:
+            return None
         # 1. Exact match
         for i, opt in enumerate(options):
             opt_text = self._get_opt_text(opt)
             if self._normalize_text(opt_text) == norm_target:
                 return i
-        # 2. Substring / containment match
+        # 2. Word boundary / prefix / suffix match with delimiters
         for i, opt in enumerate(options):
             norm_opt = self._normalize_text(self._get_opt_text(opt))
-            if (norm_target and norm_target in norm_opt) or (norm_opt and norm_opt in norm_target):
-                return i
+            if not norm_opt:
+                continue
+            for sep in (" ", ":", ".", "-"):
+                if norm_target.startswith(norm_opt + sep) or norm_opt.startswith(norm_target + sep):
+                    return i
+                if norm_target.endswith(sep + norm_opt) or norm_opt.endswith(sep + norm_target):
+                    return i
+        # 3. Substring match only for substantial strings with high overlap
+        for i, opt in enumerate(options):
+            norm_opt = self._normalize_text(self._get_opt_text(opt))
+            if len(norm_opt) >= 5 and len(norm_target) >= 5:
+                if norm_target in norm_opt or norm_opt in norm_target:
+                    shorter = min(len(norm_opt), len(norm_target))
+                    longer = max(len(norm_opt), len(norm_target))
+                    if shorter / longer >= 0.5:
+                        return i
         return None
 
     def _is_option_eliminated(self, opt_text: Any, eliminated_texts: List[str]) -> bool:
@@ -253,8 +269,16 @@ class FastAttemptManager:
             return False
         for elim in eliminated_texts:
             norm_elim = self._normalize_text(elim)
-            if norm_opt == norm_elim or (norm_elim and norm_elim in norm_opt) or (norm_opt and norm_opt in norm_elim):
+            if not norm_elim:
+                continue
+            if norm_opt == norm_elim:
                 return True
+            # Substring match only for multi-word or long unique phrases
+            if len(norm_opt) >= 5 and len(norm_elim) >= 5:
+                shorter = min(len(norm_opt), len(norm_elim))
+                longer = max(len(norm_opt), len(norm_elim))
+                if (norm_elim in norm_opt or norm_opt in norm_elim) and (shorter / longer >= 0.6):
+                    return True
         return False
 
     @_serialized
@@ -357,7 +381,14 @@ class FastAttemptManager:
                 "options": options,
                 "next_candidate": None
             })
-            entry["options"] = options
+            entry["index"] = idx
+            entry["qNum"] = idx + 1
+            if prompt:
+                entry["prompt"] = prompt
+            if q_type:
+                entry["type"] = q_type
+            if options:
+                entry["options"] = options
 
             if fb_val is True:
                 entry["status"] = "LOCKED_CORRECT"
@@ -550,16 +581,17 @@ class FastAttemptManager:
             prompt_short = item.get("prompt", "").replace("\n", " ").strip()
             if len(prompt_short) > 75:
                 prompt_short = prompt_short[:72] + "..."
+            prompt_short = prompt_short.replace("|", "\\|")
 
             if st == "LOCKED_CORRECT":
                 badge = "🔒 `LOCKED_CORRECT`"
-                opt_text = item.get("verified_text", "")
+                opt_text = str(item.get("verified_text") or "Verified").replace("|", "\\|")
                 action = "✅ Verified Correct (Locked)"
             elif st == "NEEDS_RETRY":
                 badge = "🔄 `NEEDS_RETRY`"
                 elim_cnt = len(item.get("eliminated_texts", []))
                 next_c = item.get("next_candidate", "Alternative candidate")
-                opt_text = f"`{next_c}`"
+                opt_text = str(next_c).replace("|", "\\|")
                 action = f"❌ {elim_cnt} option(s) eliminated -> Select next"
             else:
                 badge = "❔ `PENDING`"
@@ -703,15 +735,25 @@ class FastAttemptManager:
             q_mem["latest_score"] = float(score_match.group(1))
             q_mem["passed"] = q_mem["latest_score"] >= self.min_pass_threshold
 
-        sections = re.split(r"###\s*Q\d+:\s*", found_content)
-        for sec in sections[1:]:
-            lines = sec.strip().split("\n")
-            if not lines:
-                continue
-            prompt = lines[0].strip()
+        # Parse question breakdown blocks with Q-number regex
+        sections = re.findall(
+            r"###\s*Q(\d+):\s*([^\n]+)\n(.*?)(?=(?:###\s*Q\d+:|\n---\s*\n##\s*🤖|$))",
+            found_content,
+            re.DOTALL
+        )
+        for q_num_str, prompt_raw, sec in sections:
+            q_num = int(q_num_str)
+            prompt = prompt_raw.strip()
             norm_p = self._normalize_text(prompt)
 
-            is_locked = "LOCKED_CORRECT" in sec
+            # Strict status parse: match the Status line specifically to avoid protocol footer collision
+            status_match = re.search(r"-\s*\*\*Status\*\*:\s*\*\*([^*]+)\*\*", sec)
+            status_val = status_match.group(1).strip() if status_match else ""
+            is_locked = (status_val == "LOCKED_CORRECT") or (not status_val and "Status**: **LOCKED_CORRECT" in sec)
+
+            type_match = re.search(r"-\s*\*\*Type\*\*:\s*`([^`]+)`", sec)
+            q_type = type_match.group(1).strip() if type_match else "radio"
+
             verified_match = re.search(r"Verified Correct Option.*?:\s*[`\"]([^`\"\n]+)[`\"]", sec)
             verified_text = verified_match.group(1).strip() if verified_match else None
 
@@ -723,13 +765,31 @@ class FastAttemptManager:
                     if m:
                         eliminated.append(m.group(1).strip())
 
+            remaining = []
+            rem_block = re.search(r"Remaining Candidate Options.*?:\s*\n((?:\s*-\s*⏳[^\n]+\n)+)", sec)
+            if rem_block:
+                for rem_line in rem_block.group(1).split("\n"):
+                    rm = re.search(r"⏳\s*[`\"]?([^`\"\n]+)[`\"]?", rem_line)
+                    if rm:
+                        remaining.append(rm.group(1).strip())
+
+            next_cand_m = re.search(r"Next Retry Choice.*?:\s*[`\"]?([^`\"\n]+)[`\"]?", sec)
+            next_cand = next_cand_m.group(1).strip() if next_cand_m else None
+            if next_cand in ("None", "`None`", "None yet"):
+                next_cand = None
+
+            options = list(dict.fromkeys(remaining + eliminated + ([verified_text] if verified_text else [])))
+
             q_mem["questions"][norm_p] = {
+                "index": q_num - 1,
+                "qNum": q_num,
                 "prompt": prompt,
+                "type": q_type,
                 "status": "LOCKED_CORRECT" if is_locked else "NEEDS_RETRY",
                 "verified_text": verified_text,
                 "eliminated_texts": eliminated,
-                "options": [],
-                "next_candidate": None
+                "options": options,
+                "next_candidate": next_cand
             }
 
         return self.quiz_memory
@@ -740,8 +800,9 @@ class FastAttemptManager:
         Clean up law: Purge temporary files when quiz is passed or on finalization.
         """
         if quiz_id:
+            safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '_', quiz_id)
             for fname in os.listdir(self.base_cache_dir):
-                if fname.startswith(f"{quiz_id}_") and (fname.endswith(".json") or fname.endswith(".md")):
+                if (fname.startswith(f"{quiz_id}_") or fname.startswith(f"{safe_slug}_")) and (fname.endswith(".json") or fname.endswith(".md")):
                     try:
                         os.remove(os.path.join(self.base_cache_dir, fname))
                     except OSError:

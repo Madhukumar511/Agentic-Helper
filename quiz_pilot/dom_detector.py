@@ -318,7 +318,7 @@ NAVIGATE_NEXT_SCRIPT = r"""
             'input[name="bottom_Next"]',
             'button[aria-label="Next Question"]',
             'button[aria-label="Next"]',
-            'button:not([disabled])',
+            'button[data-testid*="next" i]',
             'input[type="submit"]:not([disabled])',
             'a.next',
             'a.btn-next'

@@ -1,7 +1,7 @@
 # 📋 Assessment Analysis & Retry Memory: Environmental Regulation
 
 - **Assessment / Quiz**: `Environmental Regulation`
-- **Latest Attempt**: Attempt 2
+- **Latest Attempt**: Attempt 12
 - **Latest Score**: **100.0%** (🎉 PASSED (100%))
 - **Locked Correct Answers**: **2 / 2**
 - **Questions Needing Retry**: **0 / 2**
@@ -13,7 +13,7 @@
 | # | Status | Question Summary | Verified / Next Option | Result / Action |
 |---|---|---|---|---|
 | **Q1** | 🔒 `LOCKED_CORRECT` | *What is C&C?* | `C&C` | ✅ Verified Correct (Locked) |
-| **Q1** | 🔒 `LOCKED_CORRECT` | *Benefits of VEP?* | `None` | ✅ Verified Correct (Locked) |
+| **Q2** | 🔒 `LOCKED_CORRECT` | *Benefits of VEP?* | `None` | ✅ Verified Correct (Locked) |
 
 ---
 
@@ -26,7 +26,7 @@
 - **Verified Correct Option**: `C&C`
 - **Rule**: Keep this exact option on all retries regardless of option shuffling.
 
-### Q1: Benefits of VEP?
+### Q2: Benefits of VEP?
 
 - **Type**: `radio`
 - **Status**: **LOCKED_CORRECT**

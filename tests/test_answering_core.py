@@ -247,3 +247,75 @@ def test_scheduler_retries_until_no_new_answers_then_stops(tmp_path, monkeypatch
     assert adapter.submit_count == 3
     assert result["attempts_used"] == 3
     assert result["passed"] is False
+
+
+def test_quiz_analysis_roundtrip_numbering_and_options(tmp_path):
+    mgr = _mgr(tmp_path)
+    md_file = str(tmp_path / "quiz_analysis.md")
+    qs = [
+        {"index": 0, "prompt": "First question text", "options": ["A", "B"], "type": "radio"},
+        {"index": 1, "prompt": "Second question text", "options": ["C", "D"], "type": "radio"},
+        {"index": 2, "prompt": "Third question text", "options": ["E", "F"], "type": "radio"},
+    ]
+    mgr.record_attempt(
+        quiz_id="Final Exam",
+        attempt_num=1,
+        questions=qs,
+        answers={0: 0, 1: 0, 2: 0},
+        feedback={0: True, 1: False, 2: False},
+        score_pct=33.3,
+        md_path=md_file
+    )
+
+    # Fresh manager loading the saved markdown
+    mgr2 = _mgr(tmp_path)
+    mgr2.load_quiz_analysis(md_path=md_file, quiz_id="Final Exam")
+    re_exported = mgr2.export_quiz_analysis_markdown(quiz_id="Final Exam", md_path=str(tmp_path / "quiz_analysis_2.md"))
+
+    # Verify correct numbering Q1, Q2, Q3 (not all Q1)
+    assert "| **Q1** |" in re_exported
+    assert "| **Q2** |" in re_exported
+    assert "| **Q3** |" in re_exported
+
+    # Verify locked / retry stats
+    assert "- **Locked Correct Answers**: **1 / 3**" in re_exported
+    assert "- **Questions Needing Retry**: **2 / 3**" in re_exported
+
+    # Verify Q3 is NOT falsely marked LOCKED_CORRECT by protocol footer
+    q3_sec = re_exported.split("### Q3:")[1].split("---")[0]
+    assert "NEEDS_RETRY" in q3_sec
+    assert "LOCKED_CORRECT" not in q3_sec
+
+    # Verify no double backticks ``None`` or ``Candidate`` in table
+    assert "``" not in re_exported.split("## 🔍")[0]
+
+
+def test_option_matching_and_elimination_precision(tmp_path):
+    mgr = _mgr(tmp_path)
+    # Naive substring checks must not match single digits or single letters within words
+    assert mgr._match_option_by_text("100", ["1", "2"]) is None
+    assert mgr._match_option_by_text("Category", ["A", "B", "C", "D"]) is None
+    assert mgr._match_option_by_text("Category C", ["A", "B", "C", "D"]) == 2  # matches C, never A
+
+    # Exact matches work
+    assert mgr._match_option_by_text("Option B", ["Option A", "Option B"]) == 1
+
+    # Elimination must not eliminate all options containing short letters
+    assert mgr._is_option_eliminated("Option B", ["o"]) is False
+    assert mgr._is_option_eliminated("Alpha", ["a"]) is False
+    assert mgr._is_option_eliminated("100", ["1"]) is False
+    assert mgr._is_option_eliminated("Option B", ["Option B"]) is True
+
+
+def test_ai_solver_prompt_key_support():
+    solver = AISolver(api_key=None)
+    # LMS adapters output "prompt", not "text"
+    res = solver.solve_question({"prompt": "Sample Question", "options": ["A", "B"]})
+    assert res["selected_indices"] == []
+    assert res["confidence"] == 0.0
+
+    # Test generate_answers helper
+    ans = solver.generate_answers([
+        {"index": 0, "prompt": "Sample", "options": ["A", "B"]}
+    ])
+    assert ans == {}

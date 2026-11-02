@@ -119,7 +119,6 @@ class SyllabusCrawler:
             
             rows.forEach(r => {
                 const text = r.innerText || '';
-                const linkEl = r.querySelector('a[href]');
                 const lowerText = text.toLowerCase();
                 const isAssignmentRow = (
                     lowerText.includes("assignment") ||
@@ -133,13 +132,33 @@ class SyllabusCrawler:
                     lowerText.includes("widget")
                 );
 
-                if (!linkEl && !isAssignmentRow) {
+                let targetLink = r.querySelector(
+                    'a[href*="/exam/"], a[href*="/quiz/"], a[href*="/assignment-submission/"], a[href*="/peer/"], a[href*="/supplement/"], a[href*="/programming/"], a[href*="/item/"]'
+                );
+                if (!targetLink) {
+                    targetLink = r.querySelector('a[href*="/learn/"]');
+                }
+
+                if (!targetLink || !isAssignmentRow) {
+                    return;
+                }
+
+                const href = targetLink.href || '';
+                const lowerHref = href.toLowerCase();
+
+                // Reject noise links
+                const isNoise = [
+                    '/home/welcome', '/discussions', '/announcements',
+                    '/resources', '/grades/calculator', 'unenroll', 'help'
+                ].some(noise => lowerHref.includes(noise));
+
+                if (isNoise || !href.startsWith('http')) {
                     return;
                 }
                 
-                const titleEl = r.querySelector('h3, h4, strong, a') || r;
+                const titleEl = r.querySelector('h3, h4, strong') || targetLink || r;
                 const title = titleEl ? titleEl.innerText.split('\\n')[0].trim() : '';
-                const href = linkEl ? linkEl.href : '';
+                if (!title) return;
                 
                 let itemType = 'quiz';
                 if (/programming/i.test(text) || /programming/i.test(href)) {
@@ -177,16 +196,14 @@ class SyllabusCrawler:
                     weight = weightMatch[1] + '%';
                 }
 
-                if (title && (href || isAssignmentRow || text.includes("%") || text.includes("Due"))) {
-                    results.push({
-                        title: title,
-                        type: itemType,
-                        status: status,
-                        weight: weight,
-                        url: href,
-                        raw_text: text.replace(/\\s+/g, ' ').trim()
-                    });
-                }
+                results.push({
+                    title: title,
+                    type: itemType,
+                    status: status,
+                    weight: weight,
+                    url: href,
+                    raw_text: text.replace(/\\s+/g, ' ').trim()
+                });
             });
             return results;
         }'''
@@ -217,7 +234,10 @@ class SyllabusCrawler:
                 seen_titles.add(t)
                 deduped.append(it)
 
-        incomplete = [it for it in deduped if it["status"] not in ("passed", "submitted")]
+        incomplete = [
+            it for it in deduped
+            if it["status"] not in ("passed", "submitted") and it.get("url", "").startswith("http")
+        ]
 
         return {
             "course_slug": course_slug,

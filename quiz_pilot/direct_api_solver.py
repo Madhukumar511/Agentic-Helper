@@ -21,13 +21,24 @@ class CourseraDirectAPI:
     async def from_page(cls, page) -> "CourseraDirectAPI":
         """Extracts authentication session tokens from active Playwright page/context."""
         context = page.context
-        cookies = await context.cookies(["https://www.coursera.org"])
+        cookies = []
+        try:
+            cookies = await context.cookies(["https://www.coursera.org"])
+        except Exception:
+            pass
+        if not cookies:
+            try:
+                cookies = await context.cookies()
+            except Exception:
+                cookies = []
         cauth = ""
         csrf = ""
         for c in cookies:
-            if c.get("name") == "CAUTH":
+            c_name = c.get("name", "")
+            c_name_lower = c_name.lower()
+            if c_name == "CAUTH" or c_name_lower == "cauth":
                 cauth = c.get("value", "")
-            elif c.get("name") == "CSRF3-Token":
+            elif c_name_lower in ("csrf3-token", "csrf3_token", "csrf-token"):
                 csrf = c.get("value", "")
 
         return cls(cauth_token=cauth, csrf_token=csrf)

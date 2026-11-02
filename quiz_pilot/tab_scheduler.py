@@ -284,8 +284,13 @@ class AsyncTabScheduler:
                 # 5. Record feedback and update memory
                 try:
                     fb_map = fb.get("feedback")
-                    if fb_map is None:
-                        fb_map = {q["index"]: fb.get("passed", False) for q in questions} if fb.get("passed") else {}
+                    if not fb_map:
+                        if fb.get("passed"):
+                            fb_map = {q.get("index", idx): True for idx, q in enumerate(questions)}
+                        elif fb.get("score_pct") == 0.0:
+                            fb_map = {q.get("index", idx): False for idx, q in enumerate(questions)}
+                        else:
+                            fb_map = {}
                     self.attempt_mgr.record_attempt(
                         quiz_id=quiz_key,
                         attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
@@ -347,8 +352,13 @@ class AsyncTabScheduler:
                     result["status"] = "PASSED" if result["passed"] else "COMPLETED"
                     try:
                         fb_map2 = fb2.get("feedback")
-                        if fb_map2 is None:
-                            fb_map2 = {q["index"]: fb2.get("passed", False) for q in retry_questions} if fb2.get("passed") else {}
+                        if not fb_map2:
+                            if fb2.get("passed"):
+                                fb_map2 = {q.get("index", idx): True for idx, q in enumerate(retry_questions)}
+                            elif fb2.get("score_pct") == 0.0:
+                                fb_map2 = {q.get("index", idx): False for idx, q in enumerate(retry_questions)}
+                            else:
+                                fb_map2 = {}
                         self.attempt_mgr.record_attempt(
                             quiz_id=quiz_key,
                             attempt_num=self.attempt_mgr.next_attempt_num(quiz_key),
@@ -459,7 +469,15 @@ class AsyncTabScheduler:
 
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
 
-            course_urls = [u for u in urls if "/learn/" in u or "/specializations/" in u]
+            course_urls = [
+                u for u in urls
+                if "/specializations/" in u or (
+                    "/learn/" in u and not any(k in u.lower() for k in [
+                        "/exam/", "/quiz/", "/assignment-submission/",
+                        "/peer/", "/supplement/", "/programming/", "/item/"
+                    ])
+                )
+            ]
             if course_urls and len(course_urls) == len(urls):
                 from quiz_pilot.course_orchestrator import CourseOrchestrator
                 orch = CourseOrchestrator(cdp_url=self.cdp_url, max_concurrency=self.max_concurrency)
@@ -633,6 +651,14 @@ class AsyncTabScheduler:
                     return {"error": "No open browser pages found."}
                 current_url = target_page.url
 
+            if target_url and not target_page:
+                try:
+                    target_page = await context.new_page()
+                    await target_page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
+                    current_url = target_page.url
+                except Exception:
+                    pass
+
             # Fallback to active/first page URL
             if not current_url and context.pages:
                 current_url = context.pages[0].url
@@ -653,7 +679,7 @@ class AsyncTabScheduler:
                 except Exception:
                     pass
 
-            active_page = context.pages[0] if context.pages else None
+            active_page = target_page or (context.pages[0] if context.pages else None)
 
             # Case A: Specialization page
             if "/specializations/" in current_url:

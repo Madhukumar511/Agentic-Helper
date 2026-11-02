@@ -489,12 +489,15 @@ class CourseraAdapter(BaseLMSAdapter):
             let qBlocks = allBlocks.filter(b => !allBlocks.some(other => other !== b && b.contains(other)));
             
             qBlocks.forEach((qb, i) => {
-                let isCorrect = qb.innerText.includes("1 / 1 point") || 
-                                qb.innerText.includes("Correct") || 
-                                qb.querySelector('svg[aria-label="Correct"]');
-                let isIncorrect = qb.innerText.includes("0 / 1 point") || 
-                                  qb.innerText.includes("Incorrect") || 
-                                  qb.querySelector('svg[aria-label="Incorrect"]');
+                let inner = qb.innerText || '';
+                let isIncorrect = /0\s*\/\s*\d+\s*point/i.test(inner) || 
+                                  /\bIncorrect\b/i.test(inner) || 
+                                  qb.querySelector('svg[aria-label*="Incorrect" i], [data-testid*="incorrect" i]');
+                let isCorrect = !isIncorrect && (
+                    /\b[1-9]\d*\s*\/\s*\d+\s*point/i.test(inner) || 
+                    (/\bCorrect\b/i.test(inner) && !/\bcorrect answer\b/i.test(inner) && !/\bcorrect option\b/i.test(inner)) || 
+                    qb.querySelector('svg[aria-label*="Correct" i], [data-testid*="correct" i]')
+                );
                 if (isCorrect) feedback[i] = true;
                 else if (isIncorrect) feedback[i] = false;
             });

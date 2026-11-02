@@ -298,7 +298,11 @@ def cmd_solve_all(args):
     from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync, open_and_solve_parallel_sync, smart_multiworker_sync
     urls = getattr(args, "urls", [])
     if urls:
-        if len(urls) == 1 and ("/learn/" in urls[0] or "/specializations/" in urls[0]):
+        is_asgn = any(k in urls[0].lower() for k in [
+            "/exam/", "/quiz/", "/assignment-submission/",
+            "/peer/", "/supplement/", "/programming/", "/item/"
+        ])
+        if len(urls) == 1 and ("/specializations/" in urls[0] or ("/learn/" in urls[0] and not is_asgn)):
             console.print(f"[bold cyan]🚀 Starting Smart Multi-Tab Worker Engine for course: {urls[0]} (Max Concurrency: {args.concurrency})...[/bold cyan]")
             res = smart_multiworker_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency, target_url=urls[0])
         else:
@@ -423,10 +427,13 @@ def cmd_crawl_syllabus(args):
                 return
             crawler = SyllabusCrawler(page=page)
             res = await crawler.crawl_course_assignments(args.course)
+            if getattr(args, "json", False):
+                print(json.dumps(res, indent=2))
+                return
             console.print(f"[bold green]Course:[/] {res.get('course_slug')}")
             console.print(f"Total: {res.get('total_items')} | Completed: {res.get('completed_count')} | Pending: {res.get('pending_count')}")
             for it in res.get("execution_plan", []):
-                console.print(f" - [{it.get('type')}] [bold white]{it.get('title')}[/] ({it.get('status')})")
+                console.print(f" - [{it.get('type')}] [bold white]{it.get('title')}[/] ({it.get('status')}) -> {it.get('url')}")
 
     asyncio.run(_crawl())
 
@@ -566,6 +573,7 @@ def main():
     # crawl-syllabus
     p_csyl = subparsers.add_parser("crawl-syllabus", help="Crawl course assignments table and extract pending task queue")
     p_csyl.add_argument("course", type=str, help="Course slug or URL")
+    p_csyl.add_argument("--json", action="store_true", help="Output execution plan as clean JSON")
     p_csyl.add_argument("--port", type=int, default=9222)
     p_csyl.set_defaults(func=cmd_crawl_syllabus)
 
