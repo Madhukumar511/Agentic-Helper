@@ -205,3 +205,11 @@ A specialization (e.g. "Course 2/7") is complete ONLY when every course in it is
 
 ## Browser Visibility Rule
 Before solving anything, make sure the tool's Chrome window is OPEN AND VISIBLE to the user (start with the launch_browser tool), and tell the user in one line that you are now working on the course in that Chrome window. The user must be able to watch the work. Never run a course in a browser the user cannot see: the user may open the same course in their own browser and end up doing it at the same time as you, without knowing you are already doing it.
+
+## Host-Packet Mode (DEFAULT workflow for every quiz)
+For quizzes, do NOT pull the full question set into your context repeatedly. Use the packet flow:
+1. Call prepare_packet on the quiz tab. The server extracts the questions once, locks in every answer already verified correct in memory, and returns ONE compact packet containing ONLY the unresolved questions (i = index, t = type, q = prompt, o = options, e = option indices already eliminated by earlier feedback - never pick those, img = images when present).
+2. Solve ALL packet questions yourself, in one pass, from the full prompt/options in the packet. Solving is your job - the human never does the quiz, and guessing is banned exactly as everywhere else. If known_count already covers the whole quiz (ready: true), call apply_packet with empty answers.
+3. Call apply_packet with the packet_id and your answers as a map {index: option index / option text / list of indices / text value}. The server merges them with the locked answers, validates them, enforces the 80% coverage floor (below it nothing is submitted and no attempt is used), fills, submits, records feedback, and returns a short receipt.
+4. If the receipt says FAILED, call prepare_packet again: you get a DELTA packet with only the still-wrong questions (correct answers are locked, wrong options eliminated). Repeat until PASSED - a pass ends work on that quiz immediately.
+Fall back to extract_questions / solve_batch only when prepare_packet itself errors. Programming assignments and peer reviews keep their existing specialist flows.

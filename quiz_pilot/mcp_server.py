@@ -28,11 +28,13 @@ from quiz_pilot.peer_review_solver import PeerReviewManager
 from quiz_pilot.syllabus_crawler import SyllabusCrawler
 from quiz_pilot.direct_api_solver import CourseraDirectAPI
 from quiz_pilot.course_orchestrator import CourseOrchestrator
+from quiz_pilot.packet_mode import PacketManager
 
 # Initialize helper engines
 attempt_mgr = FastAttemptManager()
 diagram_parser = LocalDiagramParser()
 prog_manager = ProgrammingAssignmentManager()
+packet_mgr = PacketManager(attempt_mgr)
 
 TOOLS = [
     {
@@ -155,6 +157,33 @@ TOOLS = [
                 "md_path": {"type": "string", "description": "Optional markdown export file path"}
             },
             "required": ["questions"]
+        }
+    },
+    {
+        "name": "prepare_packet",
+        "description": "HOST-PACKET MODE (default for quizzes): extracts the quiz ONCE, pre-solves every question already verified correct in memory, and returns a compact packet with ONLY the unresolved questions (index i, type t, prompt q, options o, eliminated option indices e, images img). Solve the packet questions and call apply_packet - never re-request the full quiz.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "cdp_url": {"type": "string", "description": "CDP URL (default: http://127.0.0.1:9222)", "default": "http://127.0.0.1:9222"},
+                "tab_keyword": {"type": "string", "description": "Optional keyword in URL or Title to pick the quiz tab"},
+                "quiz_id": {"type": "string", "description": "Optional quiz memory id; default derived as 'Title [course-slug]'"}
+            }
+        }
+    },
+    {
+        "name": "apply_packet",
+        "description": "HOST-PACKET MODE: submits the host answers for a packet prepared by prepare_packet. The server merges them with locked verified answers, validates every value, enforces the 80% coverage floor when submitting (below it: fills only, no attempt used), fills + submits, records feedback, and returns a short receipt. On failure, call prepare_packet again for a delta packet of only the still-wrong questions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "packet_id": {"type": "string", "description": "Packet id returned by prepare_packet"},
+                "answers": {"description": "Map of question_index to answer (option index, option text, list of indices for multi-select, or text/number value). A compact list of [index, value] pairs is also accepted."},
+                "submit": {"type": "boolean", "description": "Fill and submit (default: true). False fills only.", "default": True},
+                "cdp_url": {"type": "string", "description": "CDP URL (default: http://127.0.0.1:9222)", "default": "http://127.0.0.1:9222"},
+                "tab_keyword": {"type": "string", "description": "Optional keyword in URL or Title to pick the quiz tab"}
+            },
+            "required": ["packet_id", "answers"]
         }
     },
     {
@@ -775,6 +804,87 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             return {"isError": True, "content": [{"type": "text", "text": "No browser tabs open. Please open your quiz in the browser."}]}
 
         adapter = get_lms_adapter(page)
+
+        if name == "prepare_packet":
+            questions = await adapter.extract_questions_async()
+            quiz_id = arguments.get("quiz_id")
+            if not quiz_id:
+                try:
+                    _title = await page.title()
+                except Exception:
+                    _title = ""
+                _slug = (page.url or "").split("?")[0].rstrip("/").split("/")[-1]
+                quiz_id = f"{_title} [{_slug}]" if _title else (_slug or "assessment")
+            packet = packet_mgr.build_packet(quiz_id=quiz_id, questions=questions)
+            return {"content": [{"type": "text", "text": json.dumps(packet, separators=(",", ":"))}]}
+
+        elif name == "apply_packet":
+            state = packet_mgr.load_state(arguments.get("packet_id", ""))
+            if not state:
+                return {"isError": True, "content": [{"type": "text", "text": "Unknown or expired packet_id. Call prepare_packet first."}]}
+            merged = packet_mgr.merge_answers(state, arguments.get("answers", {}))
+            answers = merged["answers"]
+            want_submit = arguments.get("submit", True)
+            # Same 80% FLOOR as solve_batch: below it, fill only and
+            # burn NO attempt; the receipt names the questions the
+            # agent still has to solve (its job, never the human's).
+            if want_submit and merged["coverage_pct"] < 80.0:
+                if answers:
+                    await adapter.batch_fill_answers_async(answers, auto_submit=False)
+                _by_idx = {q.get("index", 0): q for q in state.get("questions", [])}
+                _remaining = []
+                for _i in merged["remaining_unknown"]:
+                    _q = _by_idx.get(_i, {})
+                    _remaining.append({"i": _i, "t": _q.get("type", "radio"), "q": _q.get("prompt", ""),
+                                       "o": [o.get("text", "") if isinstance(o, dict) else str(o) for o in _q.get("options", [])]})
+                return {"content": [{"type": "text", "text": json.dumps({
+                    "status": "NEEDS_REVIEW_NOT_SUBMITTED", "submitted": False,
+                    "coverage_pct": merged["coverage_pct"], "packet_id": state["packet_id"],
+                    "errors": merged["errors"], "remaining_questions": _remaining,
+                    "message": "Coverage below the 80% floor: filled known answers only, did NOT submit (no attempt used). Solve the remaining questions and call apply_packet again with the same packet_id."}, separators=(",", ":"))}]}
+            fill_results = await adapter.batch_fill_answers_async(answers, auto_submit=False)
+            if not want_submit:
+                return {"content": [{"type": "text", "text": json.dumps({
+                    "status": "FILLED_NOT_SUBMITTED", "submitted": False, "packet_id": state["packet_id"],
+                    "coverage_pct": merged["coverage_pct"], "filled": len(answers),
+                    "errors": merged["errors"], "fill_results": fill_results}, separators=(",", ":"))}]}
+            submitted = await adapter.submit_assessment_async()
+            receipt = {"status": "SUBMITTED", "submitted": bool(submitted), "packet_id": state["packet_id"],
+                       "coverage_pct": merged["coverage_pct"], "known_count": len(state.get("known", {})),
+                       "host_count": merged["accepted"], "errors": merged["errors"]}
+            if submitted:
+                await asyncio.sleep(2)
+                try:
+                    fb = await adapter.extract_feedback_async()
+                except Exception:
+                    fb = {}
+                _fb_map = fb.get("feedback", {}) if isinstance(fb, dict) else {}
+                if _fb_map:
+                    _attempt = attempt_mgr.next_attempt_num(state["quiz_id"])
+                    attempt_mgr.record_attempt(
+                        quiz_id=state["quiz_id"], attempt_num=_attempt,
+                        questions=state.get("questions", []), answers=answers,
+                        feedback=_fb_map, score_pct=fb.get("score_pct"))
+                    _wrong = []
+                    for _k, _v in _fb_map.items():
+                        if _v is False:
+                            try:
+                                _wrong.append(int(_k))
+                            except (TypeError, ValueError):
+                                pass
+                    _passed = bool(fb.get("passed")) if fb.get("passed") is not None else (fb.get("score_pct") or 0) >= 80.0
+                    receipt.update({"status": "PASSED" if _passed else "FAILED",
+                                    "score_pct": fb.get("score_pct"), "attempt": _attempt,
+                                    "wrong_indices": _wrong})
+                    if _passed:
+                        packet_mgr.delete_state(state["packet_id"])
+                        receipt["packet_id"] = None
+                    else:
+                        receipt["next"] = "Call prepare_packet again: it returns a delta packet with only the still-wrong questions (correct ones are now locked, wrong options eliminated)."
+                else:
+                    receipt["status"] = "SUBMITTED_FEEDBACK_PENDING"
+                    receipt["next"] = "Feedback not readable yet - call get_feedback, then record_quiz_analysis with this packet's quiz_id."
+            return {"content": [{"type": "text", "text": json.dumps(receipt, separators=(",", ":"))}]}
 
         if name == "extract_questions":
             questions = await adapter.extract_questions_async()
