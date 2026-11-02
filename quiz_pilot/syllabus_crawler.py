@@ -78,6 +78,10 @@ class SyllabusCrawler:
         if not self.page:
             raise ValueError("No active browser page attached.")
 
+        # If a specialization URL was provided, delegate to crawl_specialization_syllabus
+        if "/specializations/" in course_slug_or_url:
+            return await self.crawl_specialization_syllabus(course_slug_or_url)
+
         # Preserve organization prefix (e.g. /organizations/vvce)
         org_prefix = ""
         org_match = re.search(r"(/organizations/[^/?#]+)", course_slug_or_url)
@@ -92,7 +96,11 @@ class SyllabusCrawler:
         # Normalize URL to assignments view
         if "coursera.org" in course_slug_or_url:
             match = re.search(r"/learn/([^/?#]+)", course_slug_or_url)
-            course_slug = match.group(1) if match else "course"
+            if match:
+                course_slug = match.group(1)
+            else:
+                clean_path = course_slug_or_url.split("?")[0].rstrip("/")
+                course_slug = clean_path.split("/")[-1]
         else:
             course_slug = course_slug_or_url.strip("/ ")
 
@@ -299,10 +307,20 @@ class SyllabusCrawler:
                         seen.add(cleanHref);
                         const heading = a.querySelector('h3, h4, strong') || a;
                         const title = heading ? heading.innerText.trim().split('\\n')[0] : slug;
+                        // Check container text for completion status
+                        const container = a.closest('div[data-testid*="course"], div[class*="Card"], li, div[class*="css-"]') || a.parentElement || a;
+                        const cText = (container.innerText || '').toLowerCase();
+                        let status = "pending";
+                        if (cText.includes("completed") || cText.includes("view certificate") || cText.includes("share certificate") || cText.includes("100%")) {
+                            status = "completed";
+                        }
+
                         results.push({
                             title: title,
                             slug: slug,
-                            url: cleanHref
+                            url: cleanHref,
+                            type: "course",
+                            status: status
                         });
                     }
                 }
@@ -310,3 +328,31 @@ class SyllabusCrawler:
             return results;
         }''', [org_prefix])
         return courses
+
+    async def crawl_specialization_syllabus(self, spec_slug_or_url: str) -> Dict[str, Any]:
+        """
+        Crawls a Specialization page, discovers all child courses, their completion status,
+        and generates an execution plan of incomplete courses.
+        """
+        courses = await self.crawl_specialization_courses(spec_slug_or_url)
+        incomplete = [c for c in courses if c.get("status") != "completed"]
+
+        clean_slug = spec_slug_or_url
+        m = re.search(r"/specializations/([^/?#]+)", spec_slug_or_url)
+        if m:
+            clean_slug = m.group(1)
+        else:
+            clean_slug = clean_slug.split("?")[0].rstrip("/").split("/")[-1]
+
+        return {
+            "type": "specialization",
+            "course_slug": clean_slug,
+            "specialization_slug": clean_slug,
+            "total_items": len(courses),
+            "completed_count": len(courses) - len(incomplete),
+            "pending_count": len(incomplete),
+            "all_items": courses,
+            "courses": courses,
+            "assignments": courses,
+            "execution_plan": incomplete
+        }

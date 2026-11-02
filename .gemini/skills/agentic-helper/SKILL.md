@@ -69,35 +69,39 @@ Connect to the browser over CDP:
 
 ### Phase 3: Brain-Guided Multi-Tab Execution Protocol
 
-The AI Agent acts as the intelligent director, using tools to inspect and execute:
+The AI Agent acts as the intelligent director, using tools to inspect, plan, and execute:
 
-#### Step 1: Syllabus Inspection & Plan Generation
-The AI Agent crawls the course assignments to get the clean execution plan:
-```bash
-agentic-helper crawl-syllabus "<course_url>" --json
-```
+#### Tier 1: Specialization Course Discovery (If target is `/specializations/<slug>`)
+1. Crawl the specialization to discover child courses and identify which ones are incomplete:
+   ```bash
+   agentic-helper crawl-syllabus "<specialization_url>" --json
+   ```
+2. The AI Brain reads the execution plan:
+   - Identifies the first incomplete / pending course in the track.
+   - Proceeds to Tier 2 with that specific course URL (`https://www.coursera.org/.../learn/<course-slug>`).
 
-#### Step 2: AI Brain Review & URL Filtering
-The AI Agent reads the output:
-- Filters out any non-assessment tasks.
-- Identifies the real pending/failed assignments for the active course.
-- Groups them into batches of up to 4 URLs (e.g. Week 1 Quiz, Week 2 Quiz, Week 3 Quiz, Week 4 Quiz).
+#### Tier 2: Course Module & Assignment Parallelization (For each incomplete course)
+1. Crawl the incomplete course's syllabus to extract its module assignments:
+   ```bash
+   agentic-helper crawl-syllabus "<course_url>" --json
+   ```
+2. The AI Brain reviews the pending assignments:
+   - Filters out non-assessment tasks.
+   - Groups up to 4 incomplete module assignments (e.g. Week 1 Quiz, Week 2 Quiz, Week 3 Quiz, Week 4 Quiz).
+3. The AI Brain passes the EXACT verified URLs to the parallel multi-tab worker:
+   ```bash
+   agentic-helper multiworker "<quiz_url_1>" "<quiz_url_2>" "<quiz_url_3>" "<quiz_url_4>" --concurrency 4
+   ```
+   *Note: Because exact URLs are provided, the engine will NOT crawl or guess random links. It will open only these 4 tabs, solve them in parallel, and return results.*
 
-#### Step 3: Targeted Multiworker Execution
-The AI Agent passes the EXACT, verified URLs to the parallel solver:
-```bash
-agentic-helper multiworker "<quiz_url_1>" "<quiz_url_2>" "<quiz_url_3>" "<quiz_url_4>" --concurrency 4
-```
-*Note: Because exact URLs are provided, the engine will NOT crawl or guess random links. It will open only these 4 tabs, solve them in parallel, and return results.*
-
-#### Step 4: Verification & Progression
+#### Tier 3: Verification & Progression
 - The AI Agent checks the score of each tab from the output.
 - If an item is a peer assignment, run:
   ```bash
   agentic-helper submit-peer
   agentic-helper complete-reviews
   ```
-- If all modules in the course are passed, proceed to the next course in the specialization.
+- If all modules in the course are passed, proceed to the next incomplete course in the Specialization until the entire Specialization is complete!
 
 ---
 

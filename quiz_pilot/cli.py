@@ -430,10 +430,12 @@ def cmd_crawl_syllabus(args):
             if getattr(args, "json", False):
                 print(json.dumps(res, indent=2))
                 return
-            console.print(f"[bold green]Course:[/] {res.get('course_slug')}")
+            is_spec = res.get("type") == "specialization"
+            type_label = "Specialization" if is_spec else "Course"
+            console.print(f"[bold green]{type_label}:[/] {res.get('course_slug')}")
             console.print(f"Total: {res.get('total_items')} | Completed: {res.get('completed_count')} | Pending: {res.get('pending_count')}")
             for it in res.get("execution_plan", []):
-                console.print(f" - [{it.get('type')}] [bold white]{it.get('title')}[/] ({it.get('status')}) -> {it.get('url')}")
+                console.print(f" - [{it.get('type', 'item')}] [bold white]{it.get('title')}[/] ({it.get('status')}) -> {it.get('url')}")
 
     asyncio.run(_crawl())
 
