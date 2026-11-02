@@ -59,7 +59,9 @@ def activate_first_page_tab(port: int = CDP_DEFAULT_PORT) -> str:
         tabs = _cdp_get(port, "/json/list")
         if not isinstance(tabs, list):
             return ""
-        page = next((t for t in tabs if t.get("type") == "page"), None)
+        page = next((t for t in tabs if t.get("type") == "page" and "coursera.org" in (t.get("url") or "")), None)
+        if not page:
+            page = next((t for t in tabs if t.get("type") == "page"), None)
         if not page:
             return ""
         tab_id = page.get("id")
@@ -160,6 +162,19 @@ def _raise_browser_window_windows(tab_title: str = "") -> bool:
             user32.AttachThreadInput(cur_thread, win_thread, False)
             if fg_thread and fg_thread != cur_thread:
                 user32.AttachThreadInput(cur_thread, fg_thread, False)
+        # VERIFY the window really surfaced. A window cloaked on another
+        # virtual desktop accepts every call above yet stays invisible -
+        # the old code returned True anyway and the user saw no browser
+        # while the tool claimed "window brought to front".
+        try:
+            cloaked = wintypes.DWORD(0)
+            hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                target_hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked)
+            )  # 14 = DWMWA_CLOAKED
+            if hr == 0 and cloaked.value != 0:
+                return False
+        except Exception:
+            pass
         return True
     except Exception:
         return False
@@ -475,14 +490,50 @@ def ensure_browser_visible_once(port: int = CDP_DEFAULT_PORT) -> bool:
         return False
 
 
+def _close_browser_via_cdp(port: int = CDP_DEFAULT_PORT, timeout: float = 6.0) -> bool:
+    """Gracefully closes the running browser by closing all its page targets
+    over CDP, then waits for the port to free. Used only when the browser is
+    alive but its window cannot be surfaced (cloaked/windowless): a fresh
+    launch then creates a window on the CURRENT desktop. Returns True when
+    the browser actually exited."""
+    try:
+        tabs = _cdp_get(port, "/json/list")
+        if isinstance(tabs, list):
+            for t in tabs:
+                if t.get("type") == "page" and t.get("id"):
+                    try:
+                        _cdp_get(port, f"/json/close/{t['id']}")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not is_browser_running(port):
+            return True
+        time.sleep(0.3)
+    return not is_browser_running(port)
+
+
 def ensure_browser(url: Optional[str] = None, port: int = CDP_DEFAULT_PORT) -> bool:
     """Ensures browser is alive and listening, launching if needed, navigating
     to the target URL, and bringing the window to the front."""
     if is_browser_running(port):
         if url:
             open_url_in_running_browser(url, port)
-        bring_browser_to_front(port)
-        return True
+        if bring_browser_to_front(port):
+            return True
+        # The browser is alive but its window cannot be surfaced
+        # (cloaked on another virtual desktop, or windowless). Close
+        # this instance and relaunch: a fresh Chrome always opens its
+        # window on the current desktop, in front, with the same
+        # persistent profile (login preserved). Only done at run
+        # start, before any work is in progress.
+        if _close_browser_via_cdp(port):
+            ok, msg = launch_browser(url=url, port=port)
+            print(msg)
+            return ok
+        return True  # could not close it - an invisible working browser beats none
     ok, msg = launch_browser(url=url, port=port)
     print(msg)
     return ok

@@ -85,3 +85,6 @@ One worker = one tab. Act ONLY on your assigned tab (identified by its URL / tab
 
 ## Specialization Completion Rule
 A specialization (e.g. "Course 2/7") is complete ONLY when every course in it is complete. Finishing one course NEVER ends the job: go to the specialization page, list the remaining incomplete courses, and continue with them. Never say "no more courses" based on a single course page - always verify on the specialization page, and report which courses remain if any cannot be completed.
+
+## Browser Visibility Rule
+Before solving anything, make sure the tool's Chrome window is OPEN AND VISIBLE to the user (start with the launch_browser tool), and tell the user in one line that you are now working on the course in that Chrome window. The user must be able to watch the work. Never run a course in a browser the user cannot see: the user may open the same course in their own browser and end up doing it at the same time as you, without knowing you are already doing it.
