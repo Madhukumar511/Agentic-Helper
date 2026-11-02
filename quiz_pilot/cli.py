@@ -294,8 +294,8 @@ def cmd_clean(args):
 
 
 def cmd_solve_all(args):
-    """Solves and submits all open assessment tabs in parallel, or opens URLs and solves."""
-    from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync, open_and_solve_parallel_sync, smart_multiworker_sync
+    """Solves and submits open assessment tabs in parallel, or opens given URLs and solves."""
+    from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync, open_and_solve_parallel_sync
     urls = getattr(args, "urls", [])
     if urls:
         is_asgn = any(k in urls[0].lower() for k in [
@@ -303,14 +303,23 @@ def cmd_solve_all(args):
             "/peer/", "/supplement/", "/programming/", "/item/"
         ])
         if len(urls) == 1 and ("/specializations/" in urls[0] or ("/learn/" in urls[0] and not is_asgn)):
-            console.print(f"[bold cyan]🚀 Starting Smart Multi-Tab Worker Engine for course: {urls[0]} (Max Concurrency: {args.concurrency})...[/bold cyan]")
-            res = smart_multiworker_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency, target_url=urls[0])
-        else:
-            console.print(f"[bold cyan]🚀 Opening {len(urls)} URLs in background tabs and running parallel workers (Max Concurrency: {args.concurrency})...[/bold cyan]")
-            res = open_and_solve_parallel_sync(urls=urls, cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
+            console.print(f"[bold yellow]⚠️  The target URL is a Course/Specialization page, not an assessment URL.[/bold yellow]")
+            console.print(f"[bold white]As the Brain, please first inspect the syllabus using:[/bold white]")
+            console.print(f"  [bold cyan]agentic-helper crawl-syllabus \"{urls[0]}\" --json[/bold cyan]")
+            console.print(f"[bold white]Then pass the exact incomplete module assessment URLs to multiworker:[/bold white]")
+            console.print(f"  [bold cyan]agentic-helper multiworker \"<quiz_url_1>\" \"<quiz_url_2>\" ... --concurrency {args.concurrency}[/bold cyan]")
+            return
+
+        console.print(f"[bold cyan]🚀 Opening {len(urls)} URLs in background tabs and running parallel workers (Max Concurrency: {args.concurrency})...[/bold cyan]")
+        res = open_and_solve_parallel_sync(urls=urls, cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
     else:
-        console.print(f"[bold cyan]🚀 Starting Smart Multi-Tab Worker Engine (Max Concurrency: {args.concurrency})...[/bold cyan]")
-        res = smart_multiworker_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
+        # Solve ONLY already open assessment tabs in the browser. Do not auto-spawn courses or crawl!
+        console.print(f"[bold cyan]🚀 Solving open assessment tabs in browser (Max Concurrency: {args.concurrency})...[/bold cyan]")
+        res = solve_all_open_quizzes_sync(cdp_url=f"http://127.0.0.1:{args.port}", max_concurrency=args.concurrency)
+        if not res.get("results") and not res.get("items"):
+            console.print("[yellow]No open assessment tabs found in the browser.[/yellow]")
+            console.print("[dim]Use 'agentic-helper crawl-syllabus <url> --json' to find incomplete quizzes and pass exact URLs to multiworker.[/dim]")
+            return
 
     passed_count = res.get('passed_count', res.get('courses_completed', 0))
     total_count = res.get('total_tabs', res.get('total_courses_in_spec', res.get('total_processed', 0)))
@@ -411,6 +420,38 @@ def cmd_complete_reviews(args):
     asyncio.run(_complete())
 
 
+def cmd_open_tabs(args):
+    """Opens one or more URLs in background browser tabs on Brain's explicit order."""
+    import asyncio
+    from playwright.async_api import async_playwright
+    urls = getattr(args, "urls", [])
+    if not urls:
+        console.print("[yellow]No URLs specified to open.[/yellow]")
+        return
+
+    async def _open():
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            opened = []
+            for u in urls:
+                page = await context.new_page()
+                try:
+                    await page.goto(u, wait_until="domcontentloaded", timeout=15000)
+                except Exception:
+                    try:
+                        await page.goto(u, wait_until="commit", timeout=10000)
+                    except Exception:
+                        pass
+                title = await page.title()
+                opened.append({"url": u, "title": title})
+                console.print(f"[bold green]✓ Opened tab:[/] {title} -> {u}")
+            if getattr(args, "json", False):
+                print(json.dumps(opened, indent=2))
+
+    asyncio.run(_open())
+
+
 def cmd_crawl_syllabus(args):
     """Crawls course syllabus table and prints status."""
     import asyncio
@@ -421,12 +462,26 @@ def cmd_crawl_syllabus(args):
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.port}")
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
-            page = context.pages[0] if context.pages else await context.new_page()
-            if not page:
-                console.print("[bold red]No browser page found.[/bold red]")
-                return
-            crawler = SyllabusCrawler(page=page)
-            res = await crawler.crawl_course_assignments(args.course)
+
+            target_clean = args.course.split("?")[0].rstrip("/").lower()
+            matching_page = next((pg for pg in context.pages if target_clean in pg.url.lower()), None)
+            created_temp_page = False
+            if matching_page:
+                page = matching_page
+            else:
+                page = await context.new_page()
+                created_temp_page = True
+
+            try:
+                crawler = SyllabusCrawler(page=page)
+                res = await crawler.crawl_course_assignments(args.course)
+            finally:
+                if created_temp_page:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+
             if getattr(args, "json", False):
                 print(json.dumps(res, indent=2))
                 return
@@ -578,6 +633,13 @@ def main():
     p_csyl.add_argument("--json", action="store_true", help="Output execution plan as clean JSON")
     p_csyl.add_argument("--port", type=int, default=9222)
     p_csyl.set_defaults(func=cmd_crawl_syllabus)
+
+    # open-tabs
+    p_otabs = subparsers.add_parser("open-tabs", help="Open one or more URLs in background browser tabs on Brain's order")
+    p_otabs.add_argument("urls", nargs="+", help="URLs to open in browser tabs")
+    p_otabs.add_argument("--json", action="store_true", help="Output opened tab info as JSON")
+    p_otabs.add_argument("--port", type=int, default=9222)
+    p_otabs.set_defaults(func=cmd_open_tabs)
 
     # auto-course
     p_acourse = subparsers.add_parser("auto-course", help="Autonomously crawl, solve, and submit an entire course")
