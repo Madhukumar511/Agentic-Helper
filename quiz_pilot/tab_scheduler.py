@@ -32,6 +32,25 @@ ASSESSMENT_PATH_KEYWORDS = [
 ]
 
 
+def _is_same_assignment_url(url1: str, url2: str) -> bool:
+    """Checks whether two URLs refer to the same assignment or course item,
+    accounting for Coursera SPA subroutes like /attempt/1, /view, etc."""
+    if not url1 or not url2:
+        return True
+    u1 = url1.split("?")[0].rstrip("/").lower()
+    u2 = url2.split("?")[0].rstrip("/").lower()
+    if u1 == u2 or u2.startswith(u1 + "/") or u1.startswith(u2 + "/"):
+        return True
+
+    # Check if they share the same course slug and assignment ID
+    import re
+    m1 = re.search(r'/(?:learn|specializations)/([^/]+)/(?:exam|quiz|assignment-submission|programming|peer)/([^/?#]+)', u1)
+    m2 = re.search(r'/(?:learn|specializations)/([^/]+)/(?:exam|quiz|assignment-submission|programming|peer)/([^/?#]+)', u2)
+    if m1 and m2:
+        return m1.group(1) == m2.group(1) and m1.group(2) == m2.group(2)
+    return False
+
+
 def _unknown_details(questions, unknown_indices):
     """Full prompt + option texts for unknown questions, so the driving
     agent can SOLVE them itself (its job) and complete the quiz in the
@@ -188,19 +207,20 @@ class AsyncTabScheduler:
         # navigated it), try ONE re-navigation to our own URL; if that
         # fails, abort WITHOUT touching whatever foreign assessment is
         # now displayed - never adopt another worker's tab.
+        # Note: Allows Coursera internal SPA subroutes (e.g. /attempt/1, /view).
         assigned_url = (expected_url or url or "").split("?")[0].rstrip("/")
         current_base = ""
         try:
             current_base = (page.url or "").split("?")[0].rstrip("/")
         except Exception:
             pass
-        if assigned_url and current_base and current_base != assigned_url:
+        if assigned_url and current_base and not _is_same_assignment_url(assigned_url, current_base):
             try:
                 await page.goto(expected_url, wait_until="commit")
                 current_base = (page.url or "").split("?")[0].rstrip("/")
             except Exception:
                 pass
-            if current_base != assigned_url:
+            if not _is_same_assignment_url(assigned_url, current_base):
                 result["status"] = "TAB_OWNERSHIP_LOST"
                 result["error"] = (
                     f"Tab navigated away from its assigned URL ({assigned_url}); "
@@ -482,24 +502,28 @@ class AsyncTabScheduler:
                 from quiz_pilot.course_orchestrator import CourseOrchestrator
                 orch = CourseOrchestrator(cdp_url=self.cdp_url, max_concurrency=self.max_concurrency)
 
-                course_results = []
+                course_sem = asyncio.Semaphore(self.max_concurrency)
+
+                async def solve_single_course(u):
+                    async with course_sem:
+                        c_pg = await context.new_page()
+                        try:
+                            if "/specializations/" in u:
+                                return await orch.auto_complete_specialization(u)
+                            else:
+                                return await orch.auto_complete_course(u, page=c_pg, context=context, concurrency=1)
+                        except Exception as exc:
+                            return {"error": str(exc), "url": u}
+                        finally:
+                            try:
+                                await c_pg.close()
+                            except Exception:
+                                pass
+
+                course_results = await asyncio.gather(*[solve_single_course(u) for u in urls], return_exceptions=False)
                 all_items = []
                 total_passed = 0
-                for u in urls:
-                    c_pg = await context.new_page()
-                    try:
-                        if "/specializations/" in u:
-                            r = await orch.auto_complete_specialization(u)
-                        else:
-                            r = await orch.auto_complete_course(u, page=c_pg, context=context, concurrency=self.max_concurrency)
-                    except Exception as exc:
-                        r = {"error": str(exc), "url": u}
-                    finally:
-                        try:
-                            await c_pg.close()
-                        except Exception:
-                            pass
-                    course_results.append(r)
+                for r in course_results:
                     if isinstance(r, dict):
                         items = r.get("items", []) or r.get("results", []) or r.get("details", [])
                         all_items.extend(items)
@@ -599,11 +623,17 @@ class AsyncTabScheduler:
                 # Determine the target course/specialization page WITHOUT grabbing
                 # pages[0]: in multi-tab runs the first page may belong to another
                 # worker. Only an unambiguous single course/spec page may route.
+                import re
+
+                def _get_course_root(u):
+                    m = re.search(r'(https://www\.coursera\.org/(?:organizations/[^/]+/)?(?:learn|specializations)/[^/?#]+)', u or "")
+                    return m.group(1).lower() if m else (u or "").split("?")[0].lower()
+
                 course_pages = [
                     pg for pg in context.pages
                     if "/specializations/" in pg.url or "/learn/" in pg.url
                 ]
-                distinct_courses = {pg.url.split("?")[0] for pg in course_pages}
+                distinct_courses = {_get_course_root(pg.url) for pg in course_pages}
                 if len(distinct_courses) > 1:
                     spec_pages = [pg for pg in course_pages if "/specializations/" in pg.url]
                     if len(spec_pages) == 1:
@@ -612,24 +642,26 @@ class AsyncTabScheduler:
                         from quiz_pilot.course_orchestrator import CourseOrchestrator
                         orch = CourseOrchestrator(cdp_url=self.cdp_url, max_concurrency=self.max_concurrency)
 
-                        batch_res = []
+                        course_sem = asyncio.Semaphore(self.max_concurrency)
+
+                        async def run_open_course(pg):
+                            async with course_sem:
+                                c_url = _get_course_root(pg.url)
+                                try:
+                                    return await orch.auto_complete_course(
+                                        course_url=c_url,
+                                        prefer_direct_api=prefer_direct_api,
+                                        page=pg,
+                                        context=context,
+                                        concurrency=1
+                                    )
+                                except Exception as exc:
+                                    return {"error": str(exc), "url": pg.url}
+
+                        batch_res = await asyncio.gather(*[run_open_course(pg) for pg in course_pages], return_exceptions=False)
                         all_items = []
                         total_passed = 0
-                        for pg in course_pages:
-                            import re
-                            m = re.search(r'(https://www\.coursera\.org/(?:organizations/[^/]+/)?learn/[^/?#]+)', pg.url)
-                            c_url = m.group(1) if m else pg.url
-                            try:
-                                r = await orch.auto_complete_course(
-                                    course_url=c_url,
-                                    prefer_direct_api=prefer_direct_api,
-                                    page=pg,
-                                    context=context,
-                                    concurrency=self.max_concurrency
-                                )
-                            except Exception as exc:
-                                r = {"error": str(exc), "url": pg.url}
-                            batch_res.append(r)
+                        for r in batch_res:
                             if isinstance(r, dict):
                                 items = r.get("items", []) or r.get("results", [])
                                 all_items.extend(items)
