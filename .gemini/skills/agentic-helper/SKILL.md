@@ -112,7 +112,7 @@ Inside each parallel worker tab:
    - Immediately verify grade via `adapter.extract_feedback()`.
 
 3. **Pass & Zero-Artifact Purge**:
-   - When passed ($\ge 80\%$ or green pass banner), run `FastAttemptManager().purge_all()`.
+   - When passed ($\ge 80\%$ or green pass banner), purge ONLY this quiz's cache entries: run `FastAttemptManager().purge_cache(quiz_id)` with this quiz's id. NEVER run `purge_all()` - it wipes every quiz's memory and all Host-Packet state (`.assessment_cache/packets/`). A full wipe is manual-only via `agentic-helper clean`, only when the user asks.
    - Never leave any `solve_*.py`, JSON dumps, or temporary files on disk.
 
 4. **Mandatory Failure Memory & Option Elimination (`quiz_analysis.md`)**:

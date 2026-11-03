@@ -41,7 +41,7 @@ Whenever a quiz attempt fails or scores $< 100\%$, you **MUST** execute the foll
 
 ### 4. 📸 Isolated Screenshots & Cleanup
 - All screenshots must strictly live in `.assessment_cache/screenshots/`.
-- Once passed or course completes, clean internal cache and temp files via `FastAttemptManager().purge_all()`.
+- Once a quiz passes, clean ONLY that quiz's cache entries via `FastAttemptManager().purge_cache(quiz_id)`. NEVER `purge_all()` - it wipes every quiz's memory and all Host-Packet state (`.assessment_cache/packets/`); a full wipe is manual-only via `agentic-helper clean`, only when the user asks.
 
 ### 5. ⚡ Direct REST API Acceleration with Safe DOM Fallback
 - Attempt Direct REST API solving first; poll grade feedback via `get_grade_feedback(submission_id)` and sync to `quiz_analysis.md`.

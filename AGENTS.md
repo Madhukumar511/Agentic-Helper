@@ -116,17 +116,17 @@ Whenever a quiz attempt fails or scores $< 100\%$, peer agents **MUST** execute 
 
 3. **Upon Reaching 100% Pass**:
    - Update `quiz_analysis.md` with status `🎉 PASSED (100%)`.
-   - Purge internal cache `.assessment_cache/` via `attempt_mgr.purge_all()` while preserving the verified markdown analysis for review.
+   - Purge ONLY this quiz's cache entries via `attempt_mgr.purge_cache(quiz_id)` (this quiz's id), preserving the verified markdown analysis and every other quiz's memory. NEVER `purge_all()` - it also wipes `.assessment_cache/packets/` (Host-Packet state). A full wipe is manual-only via `agentic-helper clean`, only when the user asks.
 
 ### Rule 3: Isolated Screenshot & Mandatory Cleanup Law
 * **Strict Screenshot Storage**: Save all captured screenshots in `.assessment_cache/screenshots/`. Never save images in repository root, source folders, or Desktop.
-* **Mandatory Post-Course Cleanup**: As soon as a quiz or course is completed and passed ($\ge 80\%$), the agent **MUST** immediately purge all temporary files and screenshots:
+* **Mandatory Post-Course Cleanup (per-quiz only)**: As soon as a quiz is completed and passed ($\ge 80\%$), the agent **MUST** purge ONLY that quiz's attempt files:
   ```python
   from quiz_pilot.attempt_protector import FastAttemptManager
-  FastAttemptManager().purge_all()
+  FastAttemptManager().purge_cache(quiz_id)  # this quiz's id only
   ```
-  *(Or execute shell command: `agentic-helper clean`)*
-* Leaving behind any scratch scripts, dumped JSONs, or screenshots is strictly prohibited.
+* **NEVER** run `FastAttemptManager().purge_all()` or `agentic-helper clean` on your own: a full wipe erases every quiz's memory and all Host-Packet state (`.assessment_cache/packets/`), including other quizzes in the same specialization. Full cleanup is manual-only, run when the user asks for it.
+* Leaving behind any scratch scripts or dumped JSONs you created is strictly prohibited - delete your own scratch files; never wipe the shared cache.
 
 ### Rule 4: Direct REST API Acceleration with Safe DOM Fallback
 * When using `CourseOrchestrator`, attempt Direct REST API solving first by extracting `assessmentId` and mapping questions.
