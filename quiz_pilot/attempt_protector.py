@@ -622,11 +622,23 @@ class FastAttemptManager:
             if os.path.exists(p):
                 try:
                     with open(p, "r", encoding="utf-8") as f:
-                        found_content = f.read()
-                        if found_content.strip():
-                            break
+                        candidate = f.read()
                 except Exception:
                     continue
+                if not candidate.strip():
+                    continue
+                # Only ever import the REQUESTED quiz's own file. The
+                # search paths can hold another quiz's analysis (the
+                # shared cache copy is overwritten by whichever quiz
+                # recorded last); importing it under this quiz's id
+                # would graft foreign LOCKED_CORRECT / eliminated
+                # answers onto this quiz's questions.
+                if quiz_id:
+                    hdr = re.search(r"Assessment.*?:\s*[`\"]?([^`\"\r\n]+)[`\"]?", candidate)
+                    if not hdr or hdr.group(1).strip() != quiz_id:
+                        continue
+                found_content = candidate
+                break
 
         if not found_content:
             return self.quiz_memory
@@ -649,13 +661,23 @@ class FastAttemptManager:
             q_mem["latest_score"] = float(score_match.group(1))
             q_mem["passed"] = q_mem["latest_score"] >= self.min_pass_threshold
 
-        sections = re.split(r"###\s*Q\d+:\s*", found_content)
-        for sec in sections[1:]:
+        sections = re.split(r"###\s*Q(\d+):\s*", found_content)
+        # split keeps the Q numbers: [pre, num, body, num, body, ...]
+        for sec_idx in range(1, len(sections) - 1, 2):
+            sec = sections[sec_idx + 1]
             lines = sec.strip().split("\n")
             if not lines:
                 continue
             prompt = lines[0].strip()
-            norm_p = self._normalize_text(prompt)
+            # Key by the section's own question number, matching the
+            # live-record key format (prompt + index disambiguation):
+            # sections whose summaries share a prompt prefix no longer
+            # collapse into (and overwrite) a single entry.
+            try:
+                _sec_num = int(sections[sec_idx])
+            except (TypeError, ValueError):
+                _sec_num = 0
+            norm_p = self._normalize_text(prompt) + f"#{_sec_num - 1}"
 
             is_locked = "LOCKED_CORRECT" in sec
             verified_match = re.search(r"Verified Correct Option.*?:\s*[`\"]([^`\"\n]+)[`\"]", sec)

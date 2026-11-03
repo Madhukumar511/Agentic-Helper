@@ -26,6 +26,47 @@ class ProgrammingAssignmentManager:
     """
     def __init__(self, cdp_url: str = "http://127.0.0.1:9222"):
         self.cdp_url = cdp_url
+        # Persistent CDP session (speed): Playwright/Chromium connect is
+        # the slowest part of a tool call, so connect ONCE per manager and
+        # reuse the browser + pages across calls. Any failure drops the
+        # cached session and the next call reconnects - same behaviour as
+        # the old connect-per-call code, just without the repeated cost.
+        self._pw = None
+        self._browser = None
+
+    async def _get_browser(self):
+        if self._browser is not None:
+            try:
+                if self._browser.is_connected():
+                    return self._browser
+            except Exception:
+                pass
+            await self._drop_connection()
+        self._pw = await async_playwright().start()
+        self._browser = await self._pw.chromium.connect_over_cdp(self.cdp_url)
+        return self._browser
+
+    async def _drop_connection(self):
+        self._browser = None
+        pw, self._pw = self._pw, None
+        if pw is not None:
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+
+    async def get_page(self, tab_keyword: Optional[str] = None):
+        """Shared-connection page lookup (used by the MCP server so all
+        browser tools ride this one persistent connection)."""
+        for attempt in (1, 2):
+            try:
+                browser = await self._get_browser()
+                return await self.find_target_page(browser, tab_keyword)
+            except Exception:
+                await self._drop_connection()
+                if attempt == 2:
+                    raise
+        return None
 
     @staticmethod
     def is_programming_page(url: str, text: str) -> bool:
@@ -185,12 +226,11 @@ class ProgrammingAssignmentManager:
         if page:
             return await _extract(page)
 
-        async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp(self.cdp_url)
-            target = await self.find_target_page(browser, tab_keyword)
-            if not target:
-                return {"error": "No matching programming assignment page found."}
-            return await _extract(target)
+        browser = await self._get_browser()
+        target = await self.find_target_page(browser, tab_keyword)
+        if not target:
+            return {"error": "No matching programming assignment page found."}
+        return await _extract(target)
 
     async def upload_and_submit(
         self,
@@ -292,12 +332,11 @@ class ProgrammingAssignmentManager:
         if page:
             return await _upload(page)
 
-        async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp(self.cdp_url)
-            target = await self.find_target_page(browser, tab_keyword)
-            if not target:
-                return {"success": False, "error": "No matching programming assignment page found."}
-            return await _upload(target)
+        browser = await self._get_browser()
+        target = await self.find_target_page(browser, tab_keyword)
+        if not target:
+            return {"success": False, "error": "No matching programming assignment page found."}
+        return await _upload(target)
 
     async def poll_autograder_results(
         self,
@@ -377,12 +416,11 @@ class ProgrammingAssignmentManager:
         if page:
             return await _poll_loop(page)
 
-        async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp(self.cdp_url)
-            target = await self.find_target_page(browser, tab_keyword)
-            if not target:
-                return {"error": "No matching programming assignment page found."}
-            return await _poll_loop(target)
+        browser = await self._get_browser()
+        target = await self.find_target_page(browser, tab_keyword)
+        if not target:
+            return {"error": "No matching programming assignment page found."}
+        return await _poll_loop(target)
 
     def download_starter_file(self, download_url: str, dest_dir: str = ".") -> str:
         """

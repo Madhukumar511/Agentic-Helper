@@ -36,6 +36,28 @@ diagram_parser = LocalDiagramParser()
 prog_manager = ProgrammingAssignmentManager()
 packet_mgr = PacketManager(attempt_mgr)
 
+
+def _compact(obj) -> str:
+    # Every tool result lands in the host agent's context: compact JSON
+    # only (no indent / pretty-printing) to keep token cost down.
+    return json.dumps(obj, separators=(",", ":"))
+
+
+# Managers holding their own CDP connection may register a page-provider
+# here so browser tools reuse ONE persistent connection per server
+# process instead of reconnecting Playwright/CDP on every call.
+_SHARED_PAGE_PROVIDERS = []
+
+
+def _register_page_provider(provider) -> None:
+    if provider not in _SHARED_PAGE_PROVIDERS:
+        _SHARED_PAGE_PROVIDERS.append(provider)
+
+
+# The programming manager keeps one persistent CDP connection; let every
+# browser tool ride it (registered here, after the registry exists).
+_register_page_provider(prog_manager.get_page)
+
 TOOLS = [
     {
         "name": "launch_browser",
@@ -232,20 +254,6 @@ TOOLS = [
         }
     },
     {
-        "name": "inspect_all_tabs",
-        "description": "Lists all open browser tabs and identifies which ones are active assessment or course pages.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "cdp_url": {
-                    "type": "string",
-                    "description": "CDP URL (default: http://127.0.0.1:9222)",
-                    "default": "http://127.0.0.1:9222"
-                }
-            }
-        }
-    },
-    {
         "name": "smart_multiworker",
         "description": "Universal parallel executor: auto-detects whether the page is a Specialization (opens child courses in parallel tabs) or a Single Course (opens module quizzes across parallel tabs) and completes all tasks concurrently.",
         "inputSchema": {
@@ -260,30 +268,6 @@ TOOLS = [
                     "type": "boolean",
                     "description": "Whether to auto-submit quizzes (default: true)",
                     "default": True
-                }
-            }
-        }
-    },
-    {
-        "name": "solve_parallel_quizzes",
-        "description": "Executes concurrent multi-tab quiz solving across all open assessment tabs using isolated async workers.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "max_concurrency": {
-                    "type": "integer",
-                    "description": "Maximum number of tabs to process in parallel (default: 4)",
-                    "default": 4
-                },
-                "auto_submit": {
-                    "type": "boolean",
-                    "description": "Whether to automatically submit each quiz and verify grade (default: true)",
-                    "default": True
-                },
-                "cdp_url": {
-                    "type": "string",
-                    "description": "CDP URL (default: http://127.0.0.1:9222)",
-                    "default": "http://127.0.0.1:9222"
                 }
             }
         }
@@ -595,7 +579,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         target_url = arguments.get("url", "https://www.coursera.org")
         port = int(arguments.get("port", 9222))
         ok, msg = launch_browser(url=target_url, port=port)
-        return {"content": [{"type": "text", "text": json.dumps({"success": ok, "message": msg}, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact({"success": ok, "message": msg})}]}
 
     cdp_url = arguments.get("cdp_url", "http://127.0.0.1:9222")
 
@@ -623,7 +607,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             res = sim.simulate_causal(n_proc, mcasts, arrs)
         else:
             res = sim.simulate_fifo(n_proc, mcasts, arrs)
-        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(res)}]}
 
     if name == "solve_diagram":
         img_path = arguments["image_path"]
@@ -635,11 +619,11 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
                 question_prompt=q_prompt,
                 options=opts
             )
-            return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+            return {"content": [{"type": "text", "text": _compact(res)}]}
         else:
             parsed = diagram_parser.parse_spacetime_diagram(img_path)
             solved = diagram_parser.solve_fast_lamport(parsed)
-            return {"content": [{"type": "text", "text": json.dumps({"parsed": parsed, "solution": solved}, indent=2)}]}
+            return {"content": [{"type": "text", "text": _compact({"parsed": parsed, "solution": solved})}]}
 
     if name == "record_quiz_analysis":
         qid = arguments.get("quiz_id", "assessment")
@@ -649,7 +633,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         score = arguments.get("score_pct")
         att = arguments.get("attempt_num", 1)
         md_path = arguments.get("md_path", "quiz_analysis.md")
-        md = attempt_mgr.record_attempt(
+        attempt_mgr.record_attempt(
             quiz_id=qid,
             attempt_num=att,
             questions=qs,
@@ -658,26 +642,41 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             score_pct=score,
             md_path=md_path
         )
-        return {"content": [{"type": "text", "text": md}]}
+        # SHORT RECEIPT instead of the full markdown: the file stays on
+        # disk to read when needed; returning it whole burned a full copy
+        # of quiz_analysis.md into the host's context on every call.
+        # Counts cover THIS attempt's questions (other quizzes may share
+        # the manager's in-memory store across a long server session).
+        _norm = attempt_mgr._normalize_text
+        _keys = {_norm(q.get("prompt", "")) for q in qs if isinstance(q, dict)}
+        _mem = attempt_mgr.quiz_memory.get(qid, {}).get("questions", {})
+        _scoped = [v for k, v in _mem.items() if k in _keys] or list(_mem.values())
+        _receipt = {
+            "recorded": True, "quiz_id": qid, "attempt": att, "score_pct": score,
+            "locked_correct": sum(1 for v in _scoped if v.get("status") == "LOCKED_CORRECT"),
+            "needs_retry": sum(1 for v in _scoped if v.get("status") == "NEEDS_RETRY"),
+            "md_path": md_path,
+        }
+        return {"content": [{"type": "text", "text": _compact(_receipt)}]}
 
     if name == "get_retry_answers":
         qs = arguments.get("questions", [])
         qid = arguments.get("quiz_id")
         md_path = arguments.get("md_path", "quiz_analysis.md")
         answers = attempt_mgr.get_retry_answers(questions=qs, quiz_id=qid, md_path=md_path)
-        return {"content": [{"type": "text", "text": json.dumps(answers, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(answers)}]}
 
     if name == "inspect_all_tabs":
         scheduler = AsyncTabScheduler(cdp_url=cdp_url)
         tabs = await scheduler.inspect_all_tabs()
-        return {"content": [{"type": "text", "text": json.dumps(tabs, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(tabs)}]}
 
     if name in ("solve_parallel_quizzes", "smart_multiworker"):
         concurrency = int(arguments.get("concurrency") or arguments.get("max_concurrency") or 4)
         auto_sub = arguments.get("auto_submit", True)
         scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=concurrency)
         batch_results = await scheduler.smart_multiworker(auto_submit=auto_sub)
-        return {"content": [{"type": "text", "text": json.dumps(batch_results, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(batch_results)}]}
 
     if name == "open_and_solve_parallel":
         urls = arguments["urls"]
@@ -685,27 +684,27 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         auto_sub = arguments.get("auto_submit", True)
         scheduler = AsyncTabScheduler(cdp_url=cdp_url, max_concurrency=concurrency)
         batch_results = await scheduler.open_and_solve_parallel(urls=urls, auto_submit=auto_sub)
-        return {"content": [{"type": "text", "text": json.dumps(batch_results, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(batch_results)}]}
 
     if name == "inspect_programming_task":
         tab_kw = arguments.get("tab_keyword")
         pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
         res = await pm.extract_task_spec(tab_keyword=tab_kw)
-        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(res)}]}
 
     if name == "submit_code_file":
         f_path = arguments["file_path"]
         tab_kw = arguments.get("tab_keyword")
         pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
         res = await pm.upload_and_submit(file_path=f_path, tab_keyword=tab_kw)
-        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(res)}]}
 
     if name == "poll_autograder_results":
         t_sec = int(arguments.get("timeout_sec", 120))
         tab_kw = arguments.get("tab_keyword")
         pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
         res = await pm.poll_autograder_results(tab_keyword=tab_kw, timeout_sec=t_sec)
-        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(res)}]}
 
     if name == "submit_peer_assignment":
         async with async_playwright() as p:
@@ -719,7 +718,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
                 report_pdf_path=arguments["report_pdf_path"],
                 video_url=arguments.get("video_url", "")
             )
-            return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+            return {"content": [{"type": "text", "text": _compact(res)}]}
 
     if name == "complete_peer_reviews":
         async with async_playwright() as p:
@@ -730,7 +729,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             prm = PeerReviewManager(page)
             cnt = int(arguments.get("count", 4))
             res = prm.complete_peer_reviews(count=cnt)
-            return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+            return {"content": [{"type": "text", "text": _compact(res)}]}
 
     if name == "auto_solve_current_assignment":
         async with async_playwright() as p:
@@ -747,19 +746,19 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
                 t_info = prm.detect_peer_task(url, text)
                 if t_info.get("mode") == "review":
                     res = prm.complete_peer_reviews(count=t_info.get("reviews_left") or 4)
-                    return {"content": [{"type": "text", "text": json.dumps({"type": "peer_review", "result": res}, indent=2)}]}
+                    return {"content": [{"type": "text", "text": _compact({"type": "peer_review", "result": res})}]}
                 else:
-                    return {"content": [{"type": "text", "text": json.dumps({"type": "peer_submission_ready", "info": t_info}, indent=2)}]}
+                    return {"content": [{"type": "text", "text": _compact({"type": "peer_submission_ready", "info": t_info})}]}
 
             elif "programming" in url or "upload files and submit" in text:
                 pm = ProgrammingAssignmentManager(cdp_url=cdp_url)
                 spec = await pm.extract_task_spec(tab_keyword=arguments.get("tab_keyword"))
-                return {"content": [{"type": "text", "text": json.dumps({"type": "programming_assignment", "spec": spec}, indent=2)}]}
+                return {"content": [{"type": "text", "text": _compact({"type": "programming_assignment", "spec": spec})}]}
 
             else:
                 adapter = get_lms_adapter(page)
                 questions = await adapter.extract_questions_async()
-                return {"content": [{"type": "text", "text": json.dumps({"type": "quiz", "questions_count": len(questions), "sample": questions[:2]}, indent=2)}]}
+                return {"content": [{"type": "text", "text": _compact({"type": "quiz", "questions_count": len(questions), "sample": questions[:2]})}]}
 
     if name == "crawl_syllabus":
         async with async_playwright() as p:
@@ -769,7 +768,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
                 return {"isError": True, "content": [{"type": "text", "text": "No assessment page found."}]}
             crawler = SyllabusCrawler(page=page)
             res = await crawler.crawl_course_assignments(arguments["course_url"])
-            return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+            return {"content": [{"type": "text", "text": _compact(res)}]}
 
     if name == "auto_complete_entire_course":
         concurrency = int(arguments.get("max_concurrency", 4))
@@ -779,7 +778,7 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             course_url=arguments["course_url"],
             prefer_direct_api=pref_direct
         )
-        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(res)}]}
 
     if name == "auto_complete_specialization":
         spec_url = arguments["specialization_url"]
@@ -790,7 +789,17 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
             spec_url=spec_url,
             max_courses=max_c
         )
-        return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
+        return {"content": [{"type": "text", "text": _compact(res)}]}
+
+    # Browser tools: if a manager registered a live page-provider,
+    # reuse its persistent CDP connection instead of reconnecting.
+    for _provider in list(_SHARED_PAGE_PROVIDERS):
+        try:
+            _shared_page = await _provider(arguments.get("tab_keyword"))
+        except Exception:
+            _shared_page = None
+        if _shared_page is not None:
+            return await _dispatch_browser_tool(name, arguments, _shared_page, cdp_url)
 
     # Browser tools via CDP
     async with async_playwright() as p:
@@ -803,189 +812,195 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         if not page:
             return {"isError": True, "content": [{"type": "text", "text": "No browser tabs open. Please open your quiz in the browser."}]}
 
-        adapter = get_lms_adapter(page)
+        return await _dispatch_browser_tool(name, arguments, page, cdp_url)
 
-        if name == "prepare_packet":
-            questions = await adapter.extract_questions_async()
-            quiz_id = arguments.get("quiz_id")
-            if not quiz_id:
-                try:
-                    _title = await page.title()
-                except Exception:
-                    _title = ""
-                _slug = (page.url or "").split("?")[0].rstrip("/").split("/")[-1]
-                quiz_id = f"{_title} [{_slug}]" if _title else (_slug or "assessment")
-            packet = packet_mgr.build_packet(quiz_id=quiz_id, questions=questions)
-            return {"content": [{"type": "text", "text": json.dumps(packet, separators=(",", ":"))}]}
+async def _dispatch_browser_tool(name: str, arguments: Dict[str, Any], page, cdp_url: str) -> Dict[str, Any]:
+    adapter = get_lms_adapter(page)
 
-        elif name == "apply_packet":
-            state = packet_mgr.load_state(arguments.get("packet_id", ""))
-            if not state:
-                return {"isError": True, "content": [{"type": "text", "text": "Unknown or expired packet_id. Call prepare_packet first."}]}
-            merged = packet_mgr.merge_answers(state, arguments.get("answers", {}))
-            answers = merged["answers"]
-            want_submit = arguments.get("submit", True)
-            # Same 80% FLOOR as solve_batch: below it, fill only and
-            # burn NO attempt; the receipt names the questions the
-            # agent still has to solve (its job, never the human's).
-            if want_submit and merged["coverage_pct"] < 80.0:
-                if answers:
-                    await adapter.batch_fill_answers_async(answers, auto_submit=False)
-                _by_idx = {q.get("index", 0): q for q in state.get("questions", [])}
-                _remaining = []
-                for _i in merged["remaining_unknown"]:
-                    _q = _by_idx.get(_i, {})
-                    _remaining.append({"i": _i, "t": _q.get("type", "radio"), "q": _q.get("prompt", ""),
-                                       "o": [o.get("text", "") if isinstance(o, dict) else str(o) for o in _q.get("options", [])]})
-                return {"content": [{"type": "text", "text": json.dumps({
-                    "status": "NEEDS_REVIEW_NOT_SUBMITTED", "submitted": False,
-                    "coverage_pct": merged["coverage_pct"], "packet_id": state["packet_id"],
-                    "errors": merged["errors"], "remaining_questions": _remaining,
-                    "message": "Coverage below the 80% floor: filled known answers only, did NOT submit (no attempt used). Solve the remaining questions and call apply_packet again with the same packet_id."}, separators=(",", ":"))}]}
-            fill_results = await adapter.batch_fill_answers_async(answers, auto_submit=False)
-            if not want_submit:
-                return {"content": [{"type": "text", "text": json.dumps({
-                    "status": "FILLED_NOT_SUBMITTED", "submitted": False, "packet_id": state["packet_id"],
-                    "coverage_pct": merged["coverage_pct"], "filled": len(answers),
-                    "errors": merged["errors"], "fill_results": fill_results}, separators=(",", ":"))}]}
-            submitted = await adapter.submit_assessment_async()
-            receipt = {"status": "SUBMITTED", "submitted": bool(submitted), "packet_id": state["packet_id"],
-                       "coverage_pct": merged["coverage_pct"], "known_count": len(state.get("known", {})),
-                       "host_count": merged["accepted"], "errors": merged["errors"]}
-            if submitted:
-                await asyncio.sleep(2)
-                try:
-                    fb = await adapter.extract_feedback_async()
-                except Exception:
-                    fb = {}
-                _fb_map = fb.get("feedback", {}) if isinstance(fb, dict) else {}
-                if _fb_map:
-                    _attempt = attempt_mgr.next_attempt_num(state["quiz_id"])
-                    attempt_mgr.record_attempt(
-                        quiz_id=state["quiz_id"], attempt_num=_attempt,
-                        questions=state.get("questions", []), answers=answers,
-                        feedback=_fb_map, score_pct=fb.get("score_pct"))
-                    _wrong = []
-                    for _k, _v in _fb_map.items():
-                        if _v is False:
-                            try:
-                                _wrong.append(int(_k))
-                            except (TypeError, ValueError):
-                                pass
-                    _passed = bool(fb.get("passed")) if fb.get("passed") is not None else (fb.get("score_pct") or 0) >= 80.0
-                    receipt.update({"status": "PASSED" if _passed else "FAILED",
-                                    "score_pct": fb.get("score_pct"), "attempt": _attempt,
-                                    "wrong_indices": _wrong})
-                    if _passed:
-                        packet_mgr.delete_state(state["packet_id"])
-                        receipt["packet_id"] = None
-                    else:
-                        receipt["next"] = "Call prepare_packet again: it returns a delta packet with only the still-wrong questions (correct ones are now locked, wrong options eliminated)."
+    if name == "prepare_packet":
+        questions = await adapter.extract_questions_async()
+        quiz_id = arguments.get("quiz_id")
+        if not quiz_id:
+            try:
+                _title = await page.title()
+            except Exception:
+                _title = ""
+            _slug = (page.url or "").split("?")[0].rstrip("/").split("/")[-1]
+            quiz_id = f"{_title} [{_slug}]" if _title else (_slug or "assessment")
+        packet = packet_mgr.build_packet(quiz_id=quiz_id, questions=questions)
+        return {"content": [{"type": "text", "text": json.dumps(packet, separators=(",", ":"))}]}
+
+    elif name == "apply_packet":
+        state = packet_mgr.load_state(arguments.get("packet_id", ""))
+        if not state:
+            return {"isError": True, "content": [{"type": "text", "text": "Unknown or expired packet_id. Call prepare_packet first."}]}
+        merged = packet_mgr.merge_answers(state, arguments.get("answers", {}))
+        answers = merged["answers"]
+        want_submit = arguments.get("submit", True)
+        # Same 80% FLOOR as solve_batch: below it, fill only and
+        # burn NO attempt; the receipt names the questions the
+        # agent still has to solve (its job, never the human's).
+        if want_submit and merged["coverage_pct"] < 80.0:
+            if answers:
+                await adapter.batch_fill_answers_async(answers, auto_submit=False)
+            _by_idx = {q.get("index", 0): q for q in state.get("questions", [])}
+            _remaining = []
+            for _i in merged["remaining_unknown"]:
+                _q = _by_idx.get(_i, {})
+                _remaining.append({"i": _i, "t": _q.get("type", "radio"), "q": _q.get("prompt", ""),
+                                   "o": [o.get("text", "") if isinstance(o, dict) else str(o) for o in _q.get("options", [])]})
+            return {"content": [{"type": "text", "text": json.dumps({
+                "status": "NEEDS_REVIEW_NOT_SUBMITTED", "submitted": False,
+                "coverage_pct": merged["coverage_pct"], "packet_id": state["packet_id"],
+                "errors": merged["errors"], "remaining_questions": _remaining,
+                "message": "Coverage below the 80% floor: filled known answers only, did NOT submit (no attempt used). Solve the remaining questions and call apply_packet again with the same packet_id."}, separators=(",", ":"))}]}
+        fill_results = await adapter.batch_fill_answers_async(answers, auto_submit=False)
+        if not want_submit:
+            return {"content": [{"type": "text", "text": json.dumps({
+                "status": "FILLED_NOT_SUBMITTED", "submitted": False, "packet_id": state["packet_id"],
+                "coverage_pct": merged["coverage_pct"], "filled": len(answers),
+                "errors": merged["errors"], "fill_results": fill_results}, separators=(",", ":"))}]}
+        submitted = await adapter.submit_assessment_async()
+        receipt = {"status": "SUBMITTED", "submitted": bool(submitted), "packet_id": state["packet_id"],
+                   "coverage_pct": merged["coverage_pct"], "known_count": len(state.get("known", {})),
+                   "host_count": merged["accepted"], "errors": merged["errors"]}
+        if submitted:
+            await asyncio.sleep(2)
+            try:
+                fb = await adapter.extract_feedback_async()
+            except Exception:
+                fb = {}
+            _fb_map = fb.get("feedback", {}) if isinstance(fb, dict) else {}
+            if _fb_map:
+                _attempt = attempt_mgr.next_attempt_num(state["quiz_id"])
+                attempt_mgr.record_attempt(
+                    quiz_id=state["quiz_id"], attempt_num=_attempt,
+                    questions=state.get("questions", []), answers=answers,
+                    feedback=_fb_map, score_pct=fb.get("score_pct"))
+                _wrong = []
+                for _k, _v in _fb_map.items():
+                    if _v is False:
+                        try:
+                            _wrong.append(int(_k))
+                        except (TypeError, ValueError):
+                            pass
+                _passed = bool(fb.get("passed")) if fb.get("passed") is not None else (fb.get("score_pct") or 0) >= 80.0
+                receipt.update({"status": "PASSED" if _passed else "FAILED",
+                                "score_pct": fb.get("score_pct"), "attempt": _attempt,
+                                "wrong_indices": _wrong})
+                if _passed:
+                    packet_mgr.delete_state(state["packet_id"])
+                    receipt["packet_id"] = None
                 else:
-                    receipt["status"] = "SUBMITTED_FEEDBACK_PENDING"
-                    receipt["next"] = "Feedback not readable yet - call get_feedback, then record_quiz_analysis with this packet's quiz_id."
-            return {"content": [{"type": "text", "text": json.dumps(receipt, separators=(",", ":"))}]}
-
-        if name == "extract_questions":
-            questions = await adapter.extract_questions_async()
-            return {"content": [{"type": "text", "text": json.dumps(questions, indent=2)}]}
-
-        elif name == "fill_answer":
-            idx = arguments["question_index"]
-            val = arguments["value"]
-            ok = await adapter.fill_answer_async(idx, val)
-            return {"content": [{"type": "text", "text": json.dumps({"question_index": idx, "success": ok})}]}
-
-        elif name == "solve_batch":
-            answers = arguments["answers"]
-            auto_sub = arguments.get("auto_submit", False)
-            # 80% FLOOR on this path too (previously solve_batch auto-submitted
-            # with NO gate at all). The floor is a wasted-attempt guard, NOT
-            # a score target - the target is the maximum grade, every
-            # question genuinely answered. When auto_submit is requested, count the
-            # questions first; if the supplied answers cover < 80% of them,
-            # fill the known answers only and DO NOT submit (0 attempts used).
-            gate_blocked = False
-            coverage_pct = None
-            total_q = 0
-            unknown_detail = []
-            _qs = []
-            if auto_sub:
-                try:
-                    if hasattr(adapter, "extract_questions_async"):
-                        _qs = await adapter.extract_questions_async()
-                    elif hasattr(adapter, "extract_questions"):
-                        _qs = adapter.extract_questions()
-                        if asyncio.iscoroutine(_qs):
-                            _qs = await _qs
-                    else:
-                        _qs = []
-                    total_q = len(_qs or [])
-                except Exception:
-                    total_q = 0
-                if total_q:
-                    coverage_pct = round(100.0 * len(answers) / total_q, 1)
-                    if coverage_pct < 80.0:
-                        gate_blocked = True
-                        _answered = set()
-                        for _k in answers:
-                            try:
-                                _answered.add(int(_k))
-                            except (TypeError, ValueError):
-                                pass
-                        # The unknown questions go back to the agent WITH
-                        # their text: solving them is the agent's job (the
-                        # human never does a quiz). It works them out and
-                        # re-calls solve_batch with the merged full set -
-                        # still the same single attempt, nothing submitted yet.
-                        for _q in (_qs or []):
-                            _qi = _q.get("index", 0)
-                            if _qi not in _answered:
-                                unknown_detail.append({
-                                    "index": _qi,
-                                    "prompt": _q.get("prompt", ""),
-                                    "options": [
-                                        (o.get("text", "") if isinstance(o, dict) else str(o))
-                                        for o in _q.get("options", [])
-                                    ],
-                                })
-            fill_auto = auto_sub and not gate_blocked
-            if hasattr(adapter, "batch_fill_answers_async"):
-                results = await adapter.batch_fill_answers_async(answers, auto_submit=fill_auto)
-            elif hasattr(adapter, "batch_fill_answers"):
-                results = adapter.batch_fill_answers(answers, auto_submit=fill_auto)
+                    receipt["next"] = "Call prepare_packet again: it returns a delta packet with only the still-wrong questions (correct ones are now locked, wrong options eliminated)."
             else:
-                results = {}
-                for q_idx, val in answers.items():
-                    results[str(q_idx)] = await adapter.fill_answer_async(int(q_idx), val)
-                if fill_auto:
-                    await adapter.submit_assessment_async()
-            if gate_blocked:
-                return {"content": [{"type": "text", "text": json.dumps({
-                    "submitted": False,
-                    "status": "NEEDS_REVIEW_NOT_SUBMITTED",
-                    "coverage_pct": coverage_pct,
-                    "unknown_count": total_q - len(answers),
-                    "unknown_questions": unknown_detail,
-                    "message": "Known answers cover < 80% of questions: filled known answers only, did NOT submit (no attempt used). Solve or review the unknown questions, then submit.",
-                    "fill_results": results
-                }, separators=(",", ":"))}]}
-            return {"content": [{"type": "text", "text": json.dumps(results, indent=2)}]}
+                receipt["status"] = "SUBMITTED_FEEDBACK_PENDING"
+                receipt["next"] = "Feedback not readable yet - call get_feedback, then record_quiz_analysis with this packet's quiz_id."
+        return {"content": [{"type": "text", "text": json.dumps(receipt, separators=(",", ":"))}]}
 
-        elif name == "submit_assessment":
-            conf = float(arguments.get("predicted_confidence_pct", 100.0))
-            force = arguments.get("force", False)
-            if not force:
-                allowed, reason = attempt_mgr.verify_attempt_budget(conf)
-                if not allowed:
-                    return {"isError": True, "content": [{"type": "text", "text": reason}]}
-            
-            submitted = await adapter.submit_assessment_async()
-            return {"content": [{"type": "text", "text": json.dumps({"submitted": submitted})}]}
+    if name == "extract_questions":
+        questions = await adapter.extract_questions_async()
+        return {"content": [{"type": "text", "text": _compact(questions)}]}
 
-        elif name == "get_feedback":
-            fb = await adapter.extract_feedback_async()
-            return {"content": [{"type": "text", "text": json.dumps(fb, indent=2)}]}
+    elif name == "fill_answer":
+        idx = arguments["question_index"]
+        val = arguments["value"]
+        ok = await adapter.fill_answer_async(idx, val)
+        return {"content": [{"type": "text", "text": json.dumps({"question_index": idx, "success": ok})}]}
+
+    elif name == "solve_batch":
+        answers = arguments["answers"]
+        auto_sub = arguments.get("auto_submit", False)
+        # 80% FLOOR on this path too (previously solve_batch auto-submitted
+        # with NO gate at all). The floor is a wasted-attempt guard, NOT
+        # a score target - the target is the maximum grade, every
+        # question genuinely answered. When auto_submit is requested, count the
+        # questions first; if the supplied answers cover < 80% of them,
+        # fill the known answers only and DO NOT submit (0 attempts used).
+        gate_blocked = False
+        coverage_pct = None
+        total_q = 0
+        unknown_detail = []
+        _qs = []
+        if auto_sub:
+            try:
+                if hasattr(adapter, "extract_questions_async"):
+                    _qs = await adapter.extract_questions_async()
+                elif hasattr(adapter, "extract_questions"):
+                    _qs = adapter.extract_questions()
+                    if asyncio.iscoroutine(_qs):
+                        _qs = await _qs
+                else:
+                    _qs = []
+                total_q = len(_qs or [])
+            except Exception:
+                total_q = 0
+            if total_q:
+                coverage_pct = round(100.0 * len(answers) / total_q, 1)
+                if coverage_pct < 80.0:
+                    gate_blocked = True
+                    _answered = set()
+                    for _k in answers:
+                        try:
+                            _answered.add(int(_k))
+                        except (TypeError, ValueError):
+                            pass
+                    # The unknown questions go back to the agent WITH
+                    # their text: solving them is the agent's job (the
+                    # human never does a quiz). It works them out and
+                    # re-calls solve_batch with the merged full set -
+                    # still the same single attempt, nothing submitted yet.
+                    for _q in (_qs or []):
+                        _qi = _q.get("index", 0)
+                        if _qi not in _answered:
+                            unknown_detail.append({
+                                "index": _qi,
+                                "prompt": _q.get("prompt", ""),
+                                "options": [
+                                    (o.get("text", "") if isinstance(o, dict) else str(o))
+                                    for o in _q.get("options", [])
+                                ],
+                            })
+        fill_auto = auto_sub and not gate_blocked
+        if hasattr(adapter, "batch_fill_answers_async"):
+            results = await adapter.batch_fill_answers_async(answers, auto_submit=fill_auto)
+        elif hasattr(adapter, "batch_fill_answers"):
+            results = adapter.batch_fill_answers(answers, auto_submit=fill_auto)
+        else:
+            results = {}
+            for q_idx, val in answers.items():
+                results[str(q_idx)] = await adapter.fill_answer_async(int(q_idx), val)
+            if fill_auto:
+                await adapter.submit_assessment_async()
+        if gate_blocked:
+            return {"content": [{"type": "text", "text": json.dumps({
+                "submitted": False,
+                "status": "NEEDS_REVIEW_NOT_SUBMITTED",
+                "coverage_pct": coverage_pct,
+                "unknown_count": total_q - len(answers),
+                "unknown_questions": unknown_detail,
+                "message": "Known answers cover < 80% of questions: filled known answers only, did NOT submit (no attempt used). Solve or review the unknown questions, then submit.",
+                "fill_results": results
+            }, separators=(",", ":"))}]}
+        return {"content": [{"type": "text", "text": _compact(results)}]}
+
+    elif name == "submit_assessment":
+        conf = float(arguments.get("predicted_confidence_pct", 100.0))
+        force = arguments.get("force", False)
+        if not force:
+            allowed, reason = attempt_mgr.verify_attempt_budget(conf)
+            if not allowed:
+                return {"isError": True, "content": [{"type": "text", "text": reason}]}
+    
+        submitted = await adapter.submit_assessment_async()
+        return {"content": [{"type": "text", "text": json.dumps({"submitted": submitted})}]}
+
+    elif name == "get_feedback":
+        fb = await adapter.extract_feedback_async()
+        return {"content": [{"type": "text", "text": _compact(fb)}]}
+
+    return {"isError": True, "content": [{"type": "text", "text": f"Unknown browser tool: {name}"}]}
+
 
     return {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {name}"}]}
 

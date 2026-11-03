@@ -13,6 +13,28 @@ import asyncio
 from typing import List, Dict, Any
 from .base_adapter import BaseLMSAdapter
 
+def _wait_for_confirm_dialog(page, timeout_ms: int = 600) -> None:
+    """Speed: wait for the submit-confirm dialog to APPEAR (poll every
+    50 ms, give up after timeout_ms) instead of a fixed 0.5 s sleep.
+    Dialogs render in ~50-150 ms, so this returns much sooner; the
+    timeout only bites when no dialog is coming, and the following
+    evaluate still handles that case exactly as before."""
+    deadline = time.time() + timeout_ms / 1000.0
+    probe = (
+        "() => !!(document.querySelector('[data-testid=\"dialog-submit-button\"]')"
+        " || document.querySelector('div[role=\"dialog\"] button'))"
+    )
+    while True:
+        try:
+            if page.evaluate(probe):
+                return
+        except Exception:
+            return
+        if time.time() >= deadline:
+            return
+        time.sleep(0.05)
+
+
 class CourseraAdapter(BaseLMSAdapter):
     def detect(self) -> bool:
         url = getattr(self.page, "url", "")
@@ -348,7 +370,7 @@ class CourseraAdapter(BaseLMSAdapter):
         }''')
 
         # Fast reactive confirm if modal dialog popped up
-        time.sleep(0.5)
+        _wait_for_confirm_dialog(self.page)
         self.page.evaluate('''() => {
             let dialogBtn = document.querySelector('[data-testid="dialog-submit-button"]');
             if (dialogBtn) {
@@ -408,7 +430,18 @@ class CourseraAdapter(BaseLMSAdapter):
         else:
             clicked = clicked_res
 
-        await asyncio.sleep(0.5)
+        # Bounded poll for the dialog instead of a fixed 0.5 s sleep.
+        for _ in range(12):
+            try:
+                _dlg = await self.page.evaluate(
+                    "() => !!(document.querySelector('[data-testid=\"dialog-submit-button\"]')"
+                    " || document.querySelector('div[role=\"dialog\"] button'))"
+                )
+            except Exception:
+                _dlg = True
+            if _dlg:
+                break
+            await asyncio.sleep(0.05)
 
         confirm_res = self.page.evaluate('''() => {
             let dialogBtn = document.querySelector('[data-testid="dialog-submit-button"]');

@@ -51,8 +51,16 @@ async def test_mcp_record_quiz_analysis_and_retry_answers(tmp_path):
     res = await handle_call_tool("record_quiz_analysis", arguments)
     assert not res.get("isError")
     assert "content" in res
-    assert "LOCKED_CORRECT" in res["content"][0]["text"]
-    assert "NEEDS_RETRY" in res["content"][0]["text"]
+    # record_quiz_analysis returns a SHORT RECEIPT (token efficiency),
+    # not the full markdown; the statuses live in the receipt counts and
+    # in the on-disk quiz_analysis.md the tool maintains.
+    receipt = json.loads(res["content"][0]["text"])
+    assert receipt["recorded"] is True
+    assert receipt["locked_correct"] == 1
+    assert receipt["needs_retry"] == 1
+    md_text = open(md_test_path, encoding="utf-8").read()
+    assert "LOCKED_CORRECT" in md_text
+    assert "NEEDS_RETRY" in md_text
 
     retry_res = await handle_call_tool("get_retry_answers", {
         "quiz_id": "test_mcp_quiz",
@@ -434,7 +442,9 @@ def test_coursera_adapter_batch_fill_separate_from_submit():
     assert "([ansMap])" in src
 
     src_async = inspect.getsource(CourseraAdapter.submit_assessment_async)
-    assert "asyncio.sleep(0.5)" in src_async
+    # Speed: the fixed 0.5 s sleep became a bounded 50 ms dialog poll.
+    assert "asyncio.sleep(0.5)" not in src_async
+    assert "asyncio.sleep(0.05)" in src_async
 
 
 def test_coursera_adapter_prevent_runaway_dom_traversal():

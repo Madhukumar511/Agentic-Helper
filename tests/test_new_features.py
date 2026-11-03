@@ -162,8 +162,12 @@ class TestAgenticHelperFeatures(unittest.TestCase):
         self.assertIn("submit_assessment", tool_names)
         self.assertIn("solve_multicast", tool_names)
         self.assertIn("solve_diagram", tool_names)
-        self.assertIn("inspect_all_tabs", tool_names)
-        self.assertIn("solve_parallel_quizzes", tool_names)
+        # inspect_all_tabs / solve_parallel_quizzes were duplicate alias
+        # ENTRIES (same handlers as the scheduler tools); removed from the
+        # schema to cut per-session tokens - the handlers still route them.
+        self.assertNotIn("inspect_all_tabs", tool_names)
+        self.assertNotIn("solve_parallel_quizzes", tool_names)
+        self.assertIn("smart_multiworker", tool_names)
 
     def test_async_tab_scheduler_detection(self):
         from quiz_pilot.tab_scheduler import AsyncTabScheduler
