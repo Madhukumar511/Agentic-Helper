@@ -174,14 +174,7 @@ Before running extraction, verify the browser CDP port is open:
   # Automatically launches Edge/Chrome if closed, OR immediately navigates the active browser to url if already running!
   ensure_browser(url="<QUIZ_URL>", port=9222)
   ```
-- **Windows (1-Click Batch)**:
-  ```cmd
-  launch_browser_windows.bat "<QUIZ_URL>"
-  ```
-- **Windows (Direct PowerShell)**:
-  ```powershell
-  Start-Process "msedge.exe" -ArgumentList "--remote-debugging-port=9222", "--user-data-dir=$env:TEMP\agent_browser", "<QUIZ_URL>"
-  ```
+- **Browser Launch Rule (Windows):** Launch the browser ONLY via the MCP `launch_browser` tool (or `ensure_browser(...)` in Python). If a terminal command is truly unavoidable, run exactly `python -m quiz_pilot.browser_launcher "<URL>"`. NEVER launch through PowerShell/cmd chains and never invoke `launch_browser_windows.bat` from a shell - antivirus blocks nested-shell launches as a "malicious command line" and the browser then never opens. The .bat exists for the USER to double-click only.
 - **Linux**:
   ```bash
   google-chrome --remote-debugging-port=9222 --user-data-dir=~/.assessment_browser "<QUIZ_URL>" &

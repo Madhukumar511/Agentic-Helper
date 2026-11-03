@@ -45,7 +45,9 @@ from quiz_pilot.browser_launcher import ensure_browser, is_browser_running
 course_url = "<URL_PROVIDED_BY_USER_OR_COURSERA>"
 ensure_browser(url=course_url, port=9222)
 ```
-*(Or use native MCP tool `launch_browser(url=course_url)` if MCP is active, or run `launch_browser_windows.bat "<course_url>"` on Windows).*
+*(Or use native MCP tool `launch_browser(url=course_url)` if MCP is active.)*
+
+**Browser Launch Rule (Windows):** Launch the browser ONLY via the MCP `launch_browser` tool (or `ensure_browser(...)` in Python). If a terminal command is truly unavoidable, run exactly `python -m quiz_pilot.browser_launcher "<URL>"`. NEVER launch through PowerShell/cmd chains and never invoke `launch_browser_windows.bat` from a shell - antivirus blocks nested-shell launches as a "malicious command line" and the browser then never opens. The .bat exists for the USER to double-click only.
 
 ---
 

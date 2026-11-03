@@ -101,13 +101,8 @@ flowchart TD
 
 ## 🪟 Windows Antigravity IDE Quick Steps
 
-1. **Open PowerShell as Administrator** (or standard user).
-2. **Launch Chrome or Edge with debugging**:
-   ```powershell
-   & "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\tmp\agent_browser"
-   # Or Microsoft Edge:
-   & "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9222 --user-data-dir="C:\tmp\agent_browser"
-   ```
+1. **Launch the browser via the tool itself** (MCP `launch_browser` tool, or `python -m quiz_pilot.browser_launcher "<URL>"` in a terminal).
+2. **Browser Launch Rule (Windows):** Launch the browser ONLY via the MCP `launch_browser` tool (or `ensure_browser(...)` in Python). If a terminal command is truly unavoidable, run exactly `python -m quiz_pilot.browser_launcher "<URL>"`. NEVER launch through PowerShell/cmd chains and never invoke `launch_browser_windows.bat` from a shell - antivirus blocks nested-shell launches as a "malicious command line" and the browser then never opens. The .bat exists for the USER to double-click only.
 3. **Log in to your LMS (Coursera, Canvas, Moodle, etc.) and open the quiz.**
 4. **In Antigravity IDE Chat, type**:
    ```text

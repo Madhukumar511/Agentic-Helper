@@ -20,7 +20,8 @@ Enforces zero human terminal setup, multi-tab parallel workers, and self-healing
 - The repository must remain completely pristine.
 
 ### 2. 🪟 Windows Browser Launch & URL Navigation
-- Use `ensure_browser(url=course_url, port=9222)` or run `launch_browser_windows.bat "<URL>"`.
+- Use `ensure_browser(url=course_url, port=9222)`.
+- **Browser Launch Rule (Windows):** Launch the browser ONLY via the MCP `launch_browser` tool (or `ensure_browser(...)` in Python). If a terminal command is truly unavoidable, run exactly `python -m quiz_pilot.browser_launcher "<URL>"`. NEVER launch through PowerShell/cmd chains and never invoke `launch_browser_windows.bat` from a shell - antivirus blocks nested-shell launches as a "malicious command line" and the browser then never opens. The .bat exists for the USER to double-click only.
 - **Auto-Navigation Guarantee**: Even if Chrome or Edge is already running on port 9222, `ensure_browser(url)` automatically opens and activates the target URL tab over CDP!
 - Cross-platform: Automatically discovers Edge/Chrome on Windows, Linux, and macOS without `cmd.exe` quoting bugs.
 
