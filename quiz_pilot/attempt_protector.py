@@ -623,3 +623,153 @@ class FastAttemptManager:
         except Exception:
             pass
 
+    def create_host_packet(
+        self,
+        questions: List[Dict],
+        quiz_id: Optional[str] = None,
+        md_path: str = "quiz_analysis.md"
+    ) -> Dict[str, Any]:
+        """
+        Host-Packet Mode:
+        Separates questions into:
+        1. locally_solved: Resolved locally from memory (LOCKED_CORRECT), deterministic elimination,
+           or verified solutions. Known questions stay with the tool.
+        2. packet: Compact bundle containing ONLY unresolved questions that require Host (AI) reasoning.
+           Unknown questions travel in the packet.
+
+        Returns:
+        {
+            "quiz_id": str,
+            "total_questions": int,
+            "locally_solved_count": int,
+            "unresolved_count": int,
+            "status": "ALL_SOLVED_LOCALLY" | "READY_FOR_HOST",
+            "locally_solved": Dict[str, Any],
+            "packet": List[Dict[str, Any]]
+        }
+        """
+        if not self.quiz_memory or (quiz_id and quiz_id not in self.quiz_memory):
+            self.load_quiz_analysis(md_path=md_path, quiz_id=quiz_id)
+
+        target_mem = None
+        if quiz_id and quiz_id in self.quiz_memory:
+            target_mem = self.quiz_memory[quiz_id]
+        elif self.quiz_memory:
+            target_mem = next(iter(self.quiz_memory.values()))
+
+        known_q_map = target_mem.get("questions", {}) if target_mem else {}
+
+        locally_solved: Dict[str, Any] = {}
+        packet: List[Dict[str, Any]] = []
+
+        for i, q in enumerate(questions):
+            idx = q.get("index", i)
+            prompt = q.get("prompt") or q.get("text") or ""
+            norm_p = self._normalize_text(prompt)
+            options = q.get("options", [])
+            q_type = q.get("type", "radio")
+
+            # Match question prompt in known memory
+            matched_entry = None
+            if norm_p in known_q_map:
+                matched_entry = known_q_map[norm_p]
+            else:
+                for kp, ventry in known_q_map.items():
+                    if norm_p and (norm_p in kp or kp in norm_p):
+                        matched_entry = ventry
+                        break
+
+            # 1. Check if question is verified correct (LOCKED_CORRECT)
+            if matched_entry and matched_entry.get("status") == "LOCKED_CORRECT":
+                verified_text = matched_entry.get("verified_text")
+                if verified_text:
+                    opt_idx = self._match_option_by_text(verified_text, options)
+                    locally_solved[str(idx)] = opt_idx if opt_idx is not None else verified_text
+                    continue
+
+            # 2. Check if only 1 candidate remains after eliminating failed options
+            eliminated = matched_entry.get("eliminated_texts", []) if matched_entry else []
+            if eliminated and options and q_type == "radio":
+                remaining_candidates = [
+                    opt for opt in options
+                    if not self._is_option_eliminated(opt, eliminated)
+                ]
+                if len(remaining_candidates) == 1:
+                    rem_opt = remaining_candidates[0]
+                    rem_idx = self._match_option_by_text(self._get_opt_text(rem_opt), options)
+                    locally_solved[str(idx)] = rem_idx if rem_idx is not None else self._get_opt_text(rem_opt)
+                    continue
+
+            # 3. Unresolved: Package into Host Packet
+            formatted_opts = []
+            for oi, opt in enumerate(options):
+                opt_text = self._get_opt_text(opt)
+                is_elim = self._is_option_eliminated(opt, eliminated) if eliminated else False
+                formatted_opts.append({
+                    "index": oi,
+                    "text": opt_text,
+                    "eliminated": is_elim
+                })
+
+            item: Dict[str, Any] = {
+                "index": idx,
+                "q_num": idx + 1,
+                "prompt": prompt,
+                "type": q_type,
+                "options": formatted_opts,
+                "eliminated_texts": eliminated
+            }
+            imgs = q.get("images") or ([q.get("image_path")] if q.get("image_path") else [])
+            if imgs:
+                item["images"] = imgs
+            packet.append(item)
+
+        total_q = len(questions)
+        loc_cnt = len(locally_solved)
+        unres_cnt = len(packet)
+
+        return {
+            "quiz_id": quiz_id or (target_mem.get("quiz_id") if target_mem else "assessment"),
+            "total_questions": total_q,
+            "locally_solved_count": loc_cnt,
+            "unresolved_count": unres_cnt,
+            "status": "ALL_SOLVED_LOCALLY" if unres_cnt == 0 else "READY_FOR_HOST",
+            "locally_solved": locally_solved,
+            "packet": packet
+        }
+
+    def merge_host_packet_answers(
+        self,
+        locally_solved: Dict[Any, Any],
+        host_answers: Dict[Any, Any]
+    ) -> Dict[int, Any]:
+        """
+        Merges locally-solved answers and Host packet answers into a single unified
+        answer dictionary keyed by integer question index.
+        Normalizes various key types ('0', 0, 'q0', 'Q1').
+        """
+        merged: Dict[int, Any] = {}
+
+        def _insert(k: Any, v: Any):
+            k_str = str(k).strip()
+            # Try direct int conversion
+            try:
+                merged[int(k_str)] = v
+                return
+            except ValueError:
+                pass
+            # Try parsing 'q3' or 'Q3'
+            m = re.match(r'^[qQ]?(\d+)$', k_str)
+            if m:
+                merged[int(m.group(1))] = v
+            else:
+                merged[k] = v
+
+        for k, v in (locally_solved or {}).items():
+            _insert(k, v)
+
+        for k, v in (host_answers or {}).items():
+            _insert(k, v)
+
+        return merged
+

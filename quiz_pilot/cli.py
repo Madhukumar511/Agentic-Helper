@@ -293,6 +293,49 @@ def cmd_clean(args):
     console.print("[bold green]✓ Zero-Artifact Cleanup Complete: All temporary cache, submissions, and screenshots wiped![/bold green]")
 
 
+def cmd_host_packet(args):
+    """Host-Packet Mode: partitions active quiz into locally-solved vs unresolved packet."""
+    import asyncio
+    from playwright.async_api import async_playwright
+    from quiz_pilot.mcp_server import find_assessment_page
+    from quiz_pilot.lms_adapters import get_lms_adapter
+    from quiz_pilot.attempt_protector import FastAttemptManager
+
+    async def _run():
+        cdp_url = f"http://127.0.0.1:{args.port}"
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.connect_over_cdp(cdp_url)
+            except Exception as e:
+                console.print(f"[bold red]Failed to connect to browser on port {args.port}: {e}[/bold red]")
+                return
+            page = await find_assessment_page(browser, getattr(args, "tab", None))
+            if not page:
+                console.print("[bold red]No active assessment page found in browser.[/bold red]")
+                return
+            adapter = get_lms_adapter(page)
+            questions = await adapter.extract_questions_async()
+            try:
+                title = await page.title()
+            except Exception:
+                title = "assessment"
+            mgr = FastAttemptManager()
+            packet_data = mgr.create_host_packet(questions=questions or [], quiz_id=title)
+            if getattr(args, "json", False):
+                console.print(json.dumps(packet_data, indent=2))
+            else:
+                console.print(f"[bold cyan]📦 Host-Packet Generated for:[/] {packet_data.get('quiz_id')}")
+                console.print(f" - [bold green]Locally Solved Questions:[/] {packet_data.get('locally_solved_count')}/{packet_data.get('total_questions')}")
+                console.print(f" - [bold yellow]Unresolved (Host Packet):[/] {packet_data.get('unresolved_count')}/{packet_data.get('total_questions')}")
+                console.print(f" - [bold magenta]Status:[/] {packet_data.get('status')}")
+                if packet_data.get("packet"):
+                    console.print("\n[bold]Unresolved Questions Traveling in Packet:[/bold]")
+                    for item in packet_data["packet"]:
+                        console.print(f"  • Q{item.get('q_num')}: {item.get('prompt')[:60]}... ({len(item.get('options', []))} options)")
+
+    asyncio.run(_run())
+
+
 def cmd_solve_all(args):
     """Solves and submits all open assessment tabs in parallel, or opens URLs and solves."""
     from quiz_pilot.tab_scheduler import solve_all_open_quizzes_sync, open_and_solve_parallel_sync, smart_multiworker_sync
@@ -567,6 +610,13 @@ def main():
     p_acourse.add_argument("--no-api", action="store_true", help="Disable direct REST API and use DOM only")
     p_acourse.add_argument("--port", type=int, default=9222)
     p_acourse.set_defaults(func=cmd_auto_course)
+
+    # packet
+    p_pkt = subparsers.add_parser("packet", aliases=["host-packet"], help="Host-Packet Mode: extracts and outputs unresolved questions packet")
+    p_pkt.add_argument("--tab", type=str, default=None, help="Tab keyword")
+    p_pkt.add_argument("--json", action="store_true", help="Output raw JSON packet")
+    p_pkt.add_argument("--port", type=int, default=9222)
+    p_pkt.set_defaults(func=cmd_host_packet)
 
     args = parser.parse_args()
     args.func(args)

@@ -500,6 +500,35 @@ TOOLS = [
             },
             "required": ["specialization_url"]
         }
+    },
+    {
+        "name": "create_host_packet",
+        "description": "Host-Packet Mode: Partitions quiz questions into locally-solved (known from memory/deterministic logic) and unresolved. Sends only the unresolved packet to the Host (Antigravity) agent, saving tokens and preventing regressions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "quiz_id": {"type": "string", "description": "Assessment identifier or title"},
+                "tab_keyword": {"type": "string", "description": "Optional keyword in URL or Title to pick tab"},
+                "cdp_url": {"type": "string", "description": "CDP URL (default: http://127.0.0.1:9222)", "default": "http://127.0.0.1:9222"},
+                "questions": {"type": "array", "description": "Optional pre-extracted questions; if omitted, automatically extracted from active tab"}
+            }
+        }
+    },
+    {
+        "name": "submit_with_host_packet",
+        "description": "Host-Packet Mode: Merges locally-solved answers with Host answers, batch fills DOM in <50ms, auto-submits, extracts feedback, and updates quiz_analysis.md.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "host_answers": {"type": "object", "description": "Map of question index to Host-solved answer"},
+                "locally_solved": {"type": "object", "description": "Map of question index to locally-solved answer", "default": {}},
+                "quiz_id": {"type": "string", "description": "Assessment identifier or title"},
+                "auto_submit": {"type": "boolean", "description": "Whether to auto-submit", "default": True},
+                "tab_keyword": {"type": "string", "description": "Optional tab keyword"},
+                "cdp_url": {"type": "string", "description": "CDP URL (default: http://127.0.0.1:9222)", "default": "http://127.0.0.1:9222"}
+            },
+            "required": ["host_answers"]
+        }
     }
 ]
 
@@ -617,6 +646,83 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, An
         md_path = arguments.get("md_path", "quiz_analysis.md")
         answers = attempt_mgr.get_retry_answers(questions=qs, quiz_id=qid, md_path=md_path)
         return {"content": [{"type": "text", "text": json.dumps(answers, indent=2)}]}
+
+    if name == "create_host_packet":
+        qs = arguments.get("questions")
+        qid = arguments.get("quiz_id")
+        tab_kw = arguments.get("tab_keyword")
+        if not qs:
+            async with async_playwright() as p:
+                browser = await p.chromium.connect_over_cdp(cdp_url)
+                page = await find_assessment_page(browser, tab_kw)
+                if not page:
+                    return {"isError": True, "content": [{"type": "text", "text": "No assessment page found in browser."}]}
+                if not qid:
+                    try:
+                        qid = await page.title()
+                    except Exception:
+                        qid = "assessment"
+                adapter = get_lms_adapter(page)
+                qs = await adapter.extract_questions_async()
+
+        packet_data = attempt_mgr.create_host_packet(questions=qs or [], quiz_id=qid)
+        return {"content": [{"type": "text", "text": json.dumps(packet_data, indent=2)}]}
+
+    if name == "submit_with_host_packet":
+        locally_solved = arguments.get("locally_solved", {})
+        host_answers = arguments.get("host_answers", {})
+        qid = arguments.get("quiz_id", "assessment")
+        auto_sub = arguments.get("auto_submit", True)
+        tab_kw = arguments.get("tab_keyword")
+
+        merged_answers = attempt_mgr.merge_host_packet_answers(locally_solved, host_answers)
+
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(cdp_url)
+            page = await find_assessment_page(browser, tab_kw)
+            if not page:
+                return {"isError": True, "content": [{"type": "text", "text": "No assessment page found in browser."}]}
+            adapter = get_lms_adapter(page)
+
+            if hasattr(adapter, "batch_fill_answers_async"):
+                fill_results = await adapter.batch_fill_answers_async(merged_answers, auto_submit=auto_sub)
+            elif hasattr(adapter, "batch_fill_answers"):
+                fill_results = adapter.batch_fill_answers(merged_answers, auto_submit=auto_sub)
+            else:
+                fill_results = {}
+                for q_idx, val in merged_answers.items():
+                    fill_results[str(q_idx)] = await adapter.fill_answer_async(int(q_idx), val)
+                if auto_sub:
+                    await adapter.submit_assessment_async()
+
+            feedback_res = {}
+            if auto_sub:
+                await asyncio.sleep(1.0)
+                feedback_res = await adapter.extract_feedback_async()
+                if feedback_res.get("feedback"):
+                    try:
+                        fresh_qs = await adapter.extract_questions_async()
+                    except Exception:
+                        fresh_qs = []
+                    attempt_mgr.record_attempt(
+                        quiz_id=qid,
+                        attempt_num=feedback_res.get("attempt_num", 1),
+                        questions=fresh_qs or [],
+                        answers=merged_answers,
+                        feedback=feedback_res.get("feedback", {}),
+                        score_pct=feedback_res.get("score_pct")
+                    )
+
+            receipt = {
+                "status": "PASSED" if (feedback_res.get("score_pct") or 0) >= 80.0 else "SUBMITTED",
+                "score_pct": feedback_res.get("score_pct"),
+                "total_answered": len(merged_answers),
+                "locally_solved_count": len(locally_solved),
+                "host_solved_count": len(host_answers),
+                "feedback": feedback_res.get("feedback", {}),
+                "fill_results": fill_results
+            }
+            return {"content": [{"type": "text", "text": json.dumps(receipt, indent=2)}]}
 
     if name == "inspect_all_tabs":
         scheduler = AsyncTabScheduler(cdp_url=cdp_url)
